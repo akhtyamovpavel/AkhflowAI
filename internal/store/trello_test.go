@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -104,7 +106,59 @@ func TestTrelloImportDatabase(t *testing.T) {
 	if !foundLocalEdit {
 		t.Fatal("repeat import did not preserve local edit and list")
 	}
-	board.Cards = append(board.Cards, trello.Card{ID: "card3", ListID: "missing", Name: "Invalid"})
+	// The API can return open cards in archived lists, or a card moved to a list
+	// created after the list request. Previously imported list mappings remain useful.
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/boards/board123":
+			fmt.Fprint(w, `{"id":"board123"}`)
+		case "/boards/board123/lists":
+			fmt.Fprint(w, `[]`)
+		case "/boards/board123/cards":
+			// The first list is archived; a second list was created after /lists.
+			fmt.Fprint(w, `[{"id":"card1","idList":"list1","name":"Original"},{"id":"card2","idList":"list1","name":"Concurrent"},{"id":"card3","idList":"missing","name":"Unknown list"},{"id":"card4","idList":"list1","name":"Known archived list"}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer remote.Close()
+	client := trello.New("example-key", "example-token")
+	client.BaseURL = remote.URL
+	board, err = client.FetchBoard(ctx, "board123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = store.ImportTrello(ctx, projectID, userID, board)
+	if err != nil || result.TasksCreated != 2 || result.TasksSkipped != 2 || result.TasksUngrouped != 1 {
+		t.Fatalf("import cards outside list response: %+v %v", result, err)
+	}
+	tasks, err = store.ListTasks(ctx, projectID, "")
+	if err != nil || len(tasks) != 4 {
+		t.Fatalf("expected all open cards: %+v %v", tasks, err)
+	}
+	for _, task := range tasks {
+		if task.Title == "Unknown list" && task.EpicID != nil {
+			t.Fatal("unknown list must not refer to a nonexistent epic")
+		}
+		if task.Title == "Known archived list" && task.EpicID == nil {
+			t.Fatal("existing list mapping should be retained")
+		}
+	}
+	board.Lists = []trello.List{{ID: "list1", Name: "Queue"}, {ID: "missing", Name: "New list"}}
+	result, err = store.ImportTrello(ctx, projectID, userID, board)
+	if err != nil || result.TasksCreated != 0 || result.TasksSkipped != 4 || result.TasksUngrouped != 0 {
+		t.Fatalf("repeat import must not duplicate or overwrite: %+v %v", result, err)
+	}
+	tasks, err = store.ListTasks(ctx, projectID, "")
+	if err != nil || len(tasks) != 4 {
+		t.Fatalf("repeat import changed task count: %+v %v", tasks, err)
+	}
+	for _, task := range tasks {
+		if task.Title == "Unknown list" && task.EpicID != nil {
+			t.Fatal("repeat import must not change an existing task")
+		}
+	}
+	board.Cards = append(board.Cards, trello.Card{ID: "card5", Name: "Invalid"})
 	if _, err := store.ImportTrello(ctx, projectID, userID, board); err == nil || !strings.Contains(err.Error(), "карточку") {
 		t.Fatalf("expected validation error, got %v", err)
 	}
