@@ -168,7 +168,7 @@ func TestProjectRolesEnforceAccess(t *testing.T) {
 		}
 	}
 	for _, tool := range toolbox.Registry {
-		readOnly := tool.Name == "list_tasks" || tool.Name == "list_epics" || tool.Name == "get_task"
+		readOnly := tool.Name == "list_tasks" || tool.Name == "list_epics" || tool.Name == "get_task" || tool.Name == "get_agent_usage"
 		args, _ := json.Marshal(map[string]any{"project": "roles-test", "task_id": taskID})
 		_, err := tool.Handler(ctx, toolbox.Deps{Store: db, ActorID: viewer}, args)
 		if readOnly && err != nil {
