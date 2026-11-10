@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { AgentUsage } from "@/components/AgentUsage";
+import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
@@ -829,6 +831,10 @@ function ProjectWorkspace({
     return { tasks: projectTasks ?? [], members: projectMembers ?? [], epics: projectEpics ?? [] };
   }, [token, project]);
 
+  const loadAgentUsage = useCallback(async (days: number, signal: AbortSignal): Promise<AgentUsageData> => {
+    return api(`/api/projects/${encodeURIComponent(project)}/agent/usage?days=${days}`, { signal }, token);
+  }, [token, project]);
+
   const loadChats = useCallback(async () => {
     if (!token || !project) return;
     const data: ChatSession[] = (await api(`/api/projects/${project}/chats`, {}, token)) ?? [];
@@ -1366,6 +1372,8 @@ function ProjectWorkspace({
         )}
 
         {view === "agent" && (
+          <div className="space-y-4">
+          {project && <AgentUsage load={loadAgentUsage} revision={chats} />}
           <div className="grid grid-cols-[240px_1fr] gap-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -1433,6 +1441,7 @@ function ProjectWorkspace({
                 )}
               </CardContent>
             </Card>
+          </div>
           </div>
         )}
       </main>
