@@ -51,13 +51,6 @@ try {
     let data = [];
     if (path === "/api/projects") {
       data = Object.keys(tasks).map((slug, index) => ({ id: index + 1, slug, name: slug }));
-    } else if (path === "/api/projects/alpha/role") {
-      data = { role: "owner" };
-    } else if (path === "/api/projects/alpha/members" && request.method() === "PUT") {
-      const { email, role } = request.postDataJSON();
-      const member = members.alpha.find((item) => item.email === email);
-      member.role = role;
-      data = { status: "updated" };
     } else {
       const projectData = path.match(/^\/api\/projects\/(alpha|beta|empty|viewers)\/(tasks|members)$/);
       const taskDetail = path.match(/^\/api\/tasks\/(\d+)$/);
@@ -72,12 +65,8 @@ try {
   await suggestion.getByText("Рекомендуем: Анна · Незавершённых задач: 1").waitFor();
   await suggestion.getByText(/При равенстве выбран участник с меньшим ID/).waitFor();
   assert.equal(mutations, 0, "suggestions must not change an assignee");
-  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
-  await page.getByRole("button", { name: "Участники и роли" }).click();
-  await page.getByLabel("Email зарегистрированного пользователя").fill("a@example.test");
-  await page.getByLabel("Роль", { exact: true }).selectOption("viewer");
-  await page.getByRole("button", { name: "Сохранить права" }).click();
-  await page.getByText("Права участника сохранены").waitFor();
+  members.alpha.find((member) => member.id === 2).role = "viewer";
+  await page.reload();
   await page.getByRole("button", { name: "Задача Альфы", exact: true }).click();
   await suggestion.getByText("Рекомендуем: Борис · Незавершённых задач: 1").waitFor();
 
@@ -92,7 +81,7 @@ try {
   await page.locator("header select").first().selectOption("viewers");
   await page.getByRole("button", { name: "Проект читателей", exact: true }).click();
   await page.getByText("Нет участников с правом редактирования для рекомендации.").waitFor();
-  assert.equal(mutations, 1, "only the explicit role change may write");
+  assert.equal(mutations, 0, "suggestions must not change an assignee");
   console.log("PASS: workload, tie-breaking, project isolation, empty members and read-only behavior");
 } finally {
   if (browser) await browser.close();

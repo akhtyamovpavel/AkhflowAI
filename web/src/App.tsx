@@ -1217,7 +1217,7 @@ function ProjectWorkspace({
             <Button variant="ghost" size="sm" onClick={() => setAccessError(false)}>Закрыть</Button>
           </div>
         )}
-        {project && <ProjectMembers project={project} token={token} request={api} onMembersChanged={loadMembers} />}
+        {project && <ProjectMembers key={project} project={project} token={token} request={api} onMembersChanged={loadMembers} />}
         {project && (
           <QuickSearch
             key={project}
