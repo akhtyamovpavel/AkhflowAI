@@ -70,9 +70,16 @@ func TestMCPEventsAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	viewer, err := db.CreateUser(ctx, "mcp-viewer@example.invalid", "Viewer", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
 	project, err := db.CreateProject(ctx, "event-project", "Project", owner)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ok, err := db.SetProjectMemberRole(ctx, project, owner, viewer, "viewer"); err != nil || !ok {
+		t.Fatalf("add viewer: %v", err)
 	}
 	_, err = db.CreateProject(ctx, "other-project", "Other", outsider)
 	if err != nil {
@@ -114,6 +121,7 @@ func TestMCPEventsAcrossProcesses(t *testing.T) {
 		}
 		ch := make(chan events.Event, 16)
 		go func() {
+			defer close(ch)
 			scanner := bufio.NewScanner(response.Body)
 			scanner.Buffer(make([]byte, 4096), 65536)
 			for scanner.Scan() {
@@ -205,6 +213,31 @@ func TestMCPEventsAcrossProcesses(t *testing.T) {
 		t.Fatalf("local create: %d", localResponse.StatusCode)
 	}
 	receive("local-task")
+	viewerResponse, viewerEvents := stream(viewer, "event-project")
+	defer viewerResponse.Body.Close()
+	create("viewer-visible")
+	receive("viewer-visible")
+	select {
+	case event, ok := <-viewerEvents:
+		if !ok || event.Title != "viewer-visible" {
+			t.Fatalf("viewer event: %+v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("viewer did not receive MCP event")
+	}
+	if _, err := admin.Exec(ctx, "DELETE FROM "+schema+".project_members WHERE project_id=$1 AND user_id=$2", project, viewer); err != nil {
+		t.Fatal(err)
+	}
+	create("after-revocation")
+	receive("after-revocation")
+	select {
+	case event, ok := <-viewerEvents:
+		if ok {
+			t.Fatalf("revoked viewer received MCP event: %+v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("revoked viewer stream remained open")
+	}
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	notification, err := observer.WaitForNotification(waitCtx)
 	cancel()
