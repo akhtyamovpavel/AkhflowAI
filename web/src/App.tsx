@@ -10,6 +10,7 @@ import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
+import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -407,11 +408,12 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
-function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged }: {
+function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
   taskId: number;
   epics: Epic[];
   members: Member[];
   tasks: Task[];
+  recommendationReady: boolean;
   onOpen: (id: number) => void;
   onClose: () => void;
   onChanged: () => void;
@@ -579,6 +581,9 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
                 {members.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
               </select>
             </label>
+            <div className="col-span-2">
+              <AssigneeSuggestion members={members} tasks={tasks} ready={recommendationReady} />
+            </div>
             <label className="text-xs text-muted-foreground">Дедлайн
               <input
                 type="date"
@@ -773,6 +778,7 @@ function ProjectWorkspace({
   const [trelloResult, setTrelloResult] = useState("");
   const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [membersLoaded, setMembersLoaded] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [showBitrixImport, setShowBitrixImport] = useState(false);
   const [bitrixGroup, setBitrixGroup] = useState("");
@@ -865,6 +871,7 @@ function ProjectWorkspace({
     if (!token || !project) return;
     const data: Member[] = (await api(`/api/projects/${project}/members`, {}, token)) ?? [];
     setMembers(data);
+    setMembersLoaded(true);
   }, [token, project]);
 
   useEffect(() => {
@@ -1425,6 +1432,7 @@ function ProjectWorkspace({
           epics={epics}
           members={members}
           tasks={tasks}
+          recommendationReady={membersLoaded && tasksProject === project}
           onOpen={setOpenTaskId}
           onClose={() => setOpenTaskId(null)}
           onChanged={loadTasks}
