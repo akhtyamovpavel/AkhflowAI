@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -18,11 +19,29 @@ import (
 )
 
 func TestAssigneeMembership(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
+	dsn := os.Getenv("AKHFLOW_ASSIGNEE_TEST_DSN")
 	if dsn == "" {
-		t.Skip("set TEST_DATABASE_URL to an isolated PostgreSQL database")
+		t.Skip("set AKHFLOW_ASSIGNEE_TEST_DSN to a disposable PostgreSQL database")
 	}
 	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("assignee_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
+	dsnURL, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := dsnURL.Query()
+	query.Set("search_path", schema)
+	dsnURL.RawQuery = query.Encode()
+	dsn = dsnURL.String()
 	db, err := store.New(dsn)
 	if err != nil {
 		t.Fatal(err)

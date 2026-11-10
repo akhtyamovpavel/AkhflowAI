@@ -88,6 +88,24 @@ func projectBySlug(ctx context.Context, d Deps, slug string) (*domain.Project, e
 	return p, nil
 }
 
+func taskForMember(ctx context.Context, d Deps, id int64) (*domain.Task, error) {
+	task, err := d.Store.TaskByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, fmt.Errorf("task %d not found", id)
+	}
+	member, err := d.Store.IsMember(ctx, task.ProjectID, d.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	if !member {
+		return nil, fmt.Errorf("access denied to task %d", id)
+	}
+	return task, nil
+}
+
 func validStatus(s string) bool {
 	for _, v := range domain.Statuses {
 		if v == s {
@@ -379,12 +397,9 @@ var Registry = []Tool{
 				return Result{}, errors.New("task_id is required")
 			}
 			id := int64(idf)
-			t, err := d.Store.TaskByID(ctx, id)
+			t, err := taskForMember(ctx, d, id)
 			if err != nil {
 				return Result{}, err
-			}
-			if t == nil {
-				return Result{}, fmt.Errorf("task %d not found", id)
 			}
 			comments, err := d.Store.ListComments(ctx, id)
 			if err != nil {
@@ -422,12 +437,9 @@ var Registry = []Tool{
 			if body == "" {
 				return Result{}, errors.New("body is required")
 			}
-			t, err := d.Store.TaskByID(ctx, id)
+			t, err := taskForMember(ctx, d, id)
 			if err != nil {
 				return Result{}, err
-			}
-			if t == nil {
-				return Result{}, fmt.Errorf("task %d not found", id)
 			}
 			if _, err := d.Store.AddComment(ctx, id, d.ActorID, body); err != nil {
 				return Result{}, err
@@ -457,19 +469,9 @@ var Registry = []Tool{
 				return Result{}, errors.New("task_id is required")
 			}
 			id := int64(idf)
-			task, err := d.Store.TaskByID(ctx, id)
+			task, err := taskForMember(ctx, d, id)
 			if err != nil {
 				return Result{}, err
-			}
-			if task == nil {
-				return Result{}, errors.New("task not found")
-			}
-			member, err := d.Store.IsMember(ctx, task.ProjectID, d.ActorID)
-			if err != nil {
-				return Result{}, err
-			}
-			if !member {
-				return Result{}, errors.New("access denied")
 			}
 			email, ok := v["email"].(string)
 			if !ok {

@@ -315,19 +315,41 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": tid})
 }
 
+func (s *Server) taskForMember(w http.ResponseWriter, r *http.Request, id int64) (*domain.Task, bool) {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return nil, false
+	}
+	task, err := s.Store.TaskByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load task"})
+		return nil, false
+	}
+	if task == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return nil, false
+	}
+	member, err := s.Store.IsMember(r.Context(), task.ProjectID, uid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not check project access"})
+		return nil, false
+	}
+	if !member {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return nil, false
+	}
+	return task, true
+}
+
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
-	t, err := s.Store.TaskByID(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	t, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	comments, err := s.Store.ListComments(r.Context(), id)
@@ -359,13 +381,8 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
-	t, err := s.Store.TaskByID(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	t, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	var body map[string]any
@@ -663,6 +680,9 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
+	if _, ok := s.taskForMember(w, r, id); !ok {
+		return
+	}
 	comments, err := s.Store.ListComments(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -675,6 +695,10 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	task, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	uid, err := UserFrom(r.Context())
@@ -695,7 +719,7 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Bus != nil {
-		s.Bus.Publish(events.Event{Type: "task_comment", ProjectID: 0, TaskID: id, Title: "", Actor: s.Auth.ActorName(r.Context())})
+		s.Bus.Publish(events.Event{Type: "task_comment", ProjectID: task.ProjectID, TaskID: id, Title: task.Title, Actor: s.Auth.ActorName(r.Context())})
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": cid})
 }
