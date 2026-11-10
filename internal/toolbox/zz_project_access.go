@@ -31,7 +31,7 @@ func toolAccessPolicy(name string) (projectScoped, readOnly, known bool) {
 	switch name {
 	case "list_tasks", "list_epics", "get_agent_usage":
 		return true, true, true
-	case "get_task":
+	case "get_task", "list_attachments":
 		return false, true, true
 	case "create_task", "create_epic", "import_trello", "import_akhcheck_course", "import_bitrix24_tasks":
 		return true, false, true
