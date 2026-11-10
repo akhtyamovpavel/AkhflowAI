@@ -23,6 +23,10 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       AGENT_MODEL: ${AGENT_MODEL:-qwen3.5:9b}
       API_PORT: "8080"
+      SMTP_ADDR: ${SMTP_ADDR:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
     ports:
       - "8080:8080"
     depends_on:
