@@ -2,6 +2,12 @@ export type DashboardTask = {
   status: string;
   priority: string;
   assignee_id?: number | null;
+  epic_id?: number | null;
+};
+
+export type DashboardEpic = {
+  id: number;
+  title: string;
 };
 
 export type DashboardMember = {
@@ -27,6 +33,34 @@ const PRIORITIES = [
   { id: "medium", label: "Средний" },
   { id: "low", label: "Низкий" },
 ];
+
+export function summarizeEpics(tasks: DashboardTask[], epics: DashboardEpic[]) {
+  const counts = new Map<number, { total: number; done: number }>();
+  for (const epic of epics) {
+    counts.set(epic.id, { total: 0, done: 0 });
+  }
+  for (const task of tasks) {
+    if (task.epic_id == null) {
+      continue;
+    }
+    const count = counts.get(task.epic_id);
+    if (!count) {
+      continue;
+    }
+    count.total++;
+    if (task.status === "done") {
+      count.done++;
+    }
+  }
+  return epics.map((epic) => {
+    const count = counts.get(epic.id)!;
+    let percent = 0;
+    if (count.total > 0) {
+      percent = Math.round((count.done / count.total) * 100);
+    }
+    return { ...epic, ...count, percent };
+  });
+}
 
 function countBy(
   tasks: DashboardTask[],
