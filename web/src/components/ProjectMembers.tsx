@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 type Request = (path: string, options?: RequestInit, token?: string | null) => Promise<any>;
 type Member = { id: number; email: string; display_name: string; role: string };
 
-export function ProjectMembers({ project, token, request }: { project: string; token: string; request: Request }) {
+export function ProjectMembers({ project, token, request, onMembersChanged }: { project: string; token: string; request: Request; onMembersChanged: () => Promise<void> }) {
   const [role, setRole] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
   const [open, setOpen] = useState(false);
@@ -54,7 +54,7 @@ export function ProjectMembers({ project, token, request }: { project: string; t
         method: "PUT",
         body: JSON.stringify({ email: email.trim(), role: selectedRole }),
       }, token);
-      await loadMembers();
+      await Promise.all([loadMembers(), onMembersChanged()]);
       setEmail("");
       setMessage("Права участника сохранены");
     } catch {
