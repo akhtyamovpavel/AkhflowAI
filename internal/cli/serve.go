@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"akhflow.ai/akhflow/internal/email"
 	"akhflow.ai/akhflow/internal/events"
 	"akhflow.ai/akhflow/internal/llm"
 	"akhflow.ai/akhflow/internal/mcp"
@@ -71,6 +72,14 @@ func runAPI() error {
 	llmClient := llm.NewClient(os.Getenv("OLLAMA_HOST"), os.Getenv("AGENT_MODEL"))
 	bus := events.NewBus()
 	srv := server.New(st, auth, llmClient, bus)
+	emailConfig, emailEnabled, err := email.FromEnv()
+	if err != nil {
+		return fmt.Errorf("email configuration: %w", err)
+	}
+	srv.EmailAvailable = emailEnabled
+	if emailEnabled {
+		go email.Run(context.Background(), st, emailConfig)
+	}
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8080"

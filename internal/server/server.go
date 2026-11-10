@@ -19,10 +19,11 @@ import (
 )
 
 type Server struct {
-	Auth  *Auth
-	Store *store.Store
-	LLM   *llm.Client
-	Bus   *events.Bus
+	Auth           *Auth
+	Store          *store.Store
+	LLM            *llm.Client
+	Bus            *events.Bus
+	EmailAvailable bool
 }
 
 // maxChatHistory caps how many previous turns are fed into the agent context.
@@ -38,6 +39,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/register", s.register)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.Handle("GET /api/projects", s.Auth.Middleware(http.HandlerFunc(s.listProjects)))
+	mux.Handle("GET /api/settings/email-notifications", s.Auth.Middleware(http.HandlerFunc(s.getEmailNotifications)))
+	mux.Handle("PUT /api/settings/email-notifications", s.Auth.Middleware(http.HandlerFunc(s.putEmailNotifications)))
 	mux.Handle("POST /api/projects", s.Auth.Middleware(http.HandlerFunc(s.createProject)))
 	mux.Handle("GET /api/projects/{slug}/tasks", s.Auth.Middleware(http.HandlerFunc(s.listTasks)))
 	mux.Handle("GET /api/projects/{slug}/members", s.Auth.Middleware(http.HandlerFunc(s.listMembers)))

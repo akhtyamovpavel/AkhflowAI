@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
+import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
@@ -907,6 +908,7 @@ export default function App() {
             </Button>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <EmailNotifications token={token} request={api} />
             <Button variant="ghost" size="sm" onClick={() => { saveToken(null); }}>Выйти</Button>
           </div>
         </div>
