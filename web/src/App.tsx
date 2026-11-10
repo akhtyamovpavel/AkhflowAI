@@ -162,6 +162,16 @@ function briefToolResult(raw: string): string {
 
 function useToken() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("akhflow.token"));
+  useEffect(() => {
+    const syncToken = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === "akhflow.token" || event.key === null)) {
+        setToken(localStorage.getItem("akhflow.token"));
+      }
+    };
+    window.addEventListener("storage", syncToken);
+    setToken(localStorage.getItem("akhflow.token"));
+    return () => window.removeEventListener("storage", syncToken);
+  }, []);
   const save = (t: string | null) => {
     if (t) localStorage.setItem("akhflow.token", t);
     else localStorage.removeItem("akhflow.token");
@@ -180,7 +190,7 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
     },
   });
   if (!res.ok) {
-    if (res.status === 401 && token) {
+    if (res.status === 401 && token && !opts.signal?.aborted && localStorage.getItem("akhflow.token") === token) {
       localStorage.removeItem("akhflow.token");
       window.location.reload();
     }
