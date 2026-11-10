@@ -215,6 +215,25 @@ try {
   await page.getByRole("button", { name: /^(Повторить сохранение|Сохранить заголовок)$/ }).click();
   await page.getByRole("button", { name: "New draft after reopening", exact: true }).waitFor();
 
+  mode = "hold";
+  releasePatch = undefined;
+  await title.fill("Serialized old title");
+  await description.click();
+  await page.getByRole("status").filter({ hasText: "Сохраняем заголовок" }).waitFor();
+  while (!releasePatch) await delay(10);
+  await page.getByRole("button", { name: "#2 Linked task", exact: true }).click();
+  await page.getByRole("button", { name: `#1 ${task.title}`, exact: true }).click();
+  await title.fill("Serialized final title");
+  await description.click();
+  await page.getByRole("status").filter({ hasText: "Сохраняем заголовок" }).waitFor();
+  await delay(100);
+  assert.equal(writes.at(-1), "Serialized old title", "new request overtook pending request from old component");
+  mode = "success";
+  releasePatch();
+  await page.getByRole("button", { name: "Serialized final title", exact: true }).waitFor();
+  assert.equal(task.title, "Serialized final title", "old request overwrote the newer server value");
+  assert.deepEqual(writes.slice(-2), ["Serialized old title", "Serialized final title"]);
+
   failRefresh = true;
   await title.fill("Saved despite refresh failure");
   await description.click();

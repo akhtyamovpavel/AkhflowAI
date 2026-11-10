@@ -454,6 +454,7 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
 }
 
 const taskTitleDrafts = new Map<string, string>();
+const taskTitleWrites = new Map<string, Promise<unknown>>();
 
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
@@ -531,8 +532,11 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     titleSavePending.current = true;
     setSavingTitle(true);
     setTitleError("");
+    const previousWrite = taskTitleWrites.get(draftKey) ?? Promise.resolve();
+    const write = previousWrite.catch(() => {}).then(() => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ title: value }) }, token));
+    taskTitleWrites.set(draftKey, write);
     try {
-      await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ title: value }) }, token);
+      await write;
       if (taskTitleDrafts.get(draftKey) === value) {
         taskTitleDrafts.delete(draftKey);
       }
@@ -550,6 +554,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     } catch {
       setTitleError("Не удалось сохранить заголовок. Введённый текст остался в поле. Попробуй ещё раз.");
     } finally {
+      if (taskTitleWrites.get(draftKey) === write) {
+        taskTitleWrites.delete(draftKey);
+      }
       titleSavePending.current = false;
       setSavingTitle(false);
     }
