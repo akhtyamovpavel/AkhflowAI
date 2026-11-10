@@ -473,6 +473,8 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [desc, setDesc] = useState("");
   const description = useRef({ value: "", saved: "", version: 0 });
   const [savingDescription, setSavingDescription] = useState(false);
+  const descriptionSaving = useRef(false);
+  const [descriptionError, setDescriptionError] = useState("");
   const [comment, setComment] = useState("");
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
@@ -510,15 +512,25 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const saveDescription = async () => {
+    if (descriptionSaving.current) return;
     const value = description.current.value;
+    descriptionSaving.current = true;
     setSavingDescription(true);
+    setDescriptionError("");
     try {
       await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ description: value }) }, token);
       description.current.saved = value;
       description.current.version += 1;
-      await load();
       onChanged();
+      try {
+        await load();
+      } catch {
+        setDescriptionError("Описание сохранено, но обновить карточку не удалось.");
+      }
+    } catch {
+      setDescriptionError("Не удалось сохранить описание. Попробуй ещё раз.");
     } finally {
+      descriptionSaving.current = false;
       setSavingDescription(false);
     }
   };
@@ -688,6 +700,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
               }}
               placeholder="Описание задачи..."
             />
+            {descriptionError && <p role="alert" className="text-sm text-destructive">{descriptionError}</p>}
             <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription}>Сохранить</Button>
           </div>
           <div>
