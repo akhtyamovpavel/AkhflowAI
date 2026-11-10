@@ -3,20 +3,16 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/domain"
+	"akhflow.ai/akhflow/internal/testdb"
 )
 
-// Set this only to an isolated test database; migrations are applied to it.
 func TestBitrixImportConcurrentAndProjectIsolation(t *testing.T) {
-	dsn := os.Getenv("AKHFLOW_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("isolated test database not configured")
-	}
+	dsn := testdb.Schema(t, "AKHFLOW_TEST_DATABASE_URL")
 	ctx := context.Background()
 	st, err := New(dsn)
 	if err != nil {

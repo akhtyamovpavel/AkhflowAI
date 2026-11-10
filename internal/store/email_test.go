@@ -3,18 +3,15 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/domain"
+	"akhflow.ai/akhflow/internal/testdb"
 )
 
 func TestEmailQueueIntegration(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set TEST_DATABASE_URL to an isolated PostgreSQL database")
-	}
+	dsn := testdb.Schema(t, "TEST_DATABASE_URL")
 	ctx := context.Background()
 	s, err := New(dsn)
 	if err != nil {
