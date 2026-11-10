@@ -1,0 +1,111 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"akhflow.ai/akhflow/internal/trello"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Set AKHFLOW_TRELLO_TEST_DSN to run against a disposable schema in PostgreSQL.
+func TestTrelloImportDatabase(t *testing.T) {
+	dsn := os.Getenv("AKHFLOW_TRELLO_TEST_DSN")
+	if dsn == "" {
+		t.Skip("AKHFLOW_TRELLO_TEST_DSN is not set")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	schema := fmt.Sprintf("trello_test_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE")
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	store := &Store{db: pool}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	userID, err := store.CreateUser(ctx, "import@example.com", "Tester", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, err := store.CreateProject(ctx, "import-test", "Import", userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := &trello.Board{ID: "board123", Lists: []trello.List{{ID: "list1", Name: "Queue"}}, Cards: []trello.Card{{ID: "card1", ListID: "list1", Name: "Original", Desc: "Details"}}}
+	result, err := store.ImportTrello(ctx, projectID, userID, board)
+	if err != nil || result.TasksCreated != 1 || result.ListsCreated != 1 {
+		t.Fatalf("first import: %+v %v", result, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET title='Local edit'`); err != nil {
+		t.Fatal(err)
+	}
+	board.Cards = append(board.Cards, trello.Card{ID: "card2", ListID: "list1", Name: "Concurrent"})
+	var wg sync.WaitGroup
+	results := make(chan TrelloImportResult, 2)
+	errors := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := store.ImportTrello(ctx, projectID, userID, board)
+			results <- result
+			errors <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	created := 0
+	for result := range results {
+		if result.TasksCreated+result.TasksSkipped != 2 || result.ListsCreated != 0 {
+			t.Fatalf("repeat import: %+v", result)
+		}
+		created += result.TasksCreated
+	}
+	if created != 1 {
+		t.Fatalf("expected one concurrent creation, got %d", created)
+	}
+	tasks, err := store.ListTasks(ctx, projectID, "")
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("unexpected tasks: %+v %v", tasks, err)
+	}
+	var foundLocalEdit bool
+	for _, task := range tasks {
+		if task.Title == "Local edit" && task.EpicID != nil {
+			foundLocalEdit = true
+		}
+	}
+	if !foundLocalEdit {
+		t.Fatal("repeat import did not preserve local edit and list")
+	}
+	board.Cards = append(board.Cards, trello.Card{ID: "card3", ListID: "missing", Name: "Invalid"})
+	if _, err := store.ImportTrello(ctx, projectID, userID, board); err == nil || !strings.Contains(err.Error(), "карточку") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}

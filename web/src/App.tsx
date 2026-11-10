@@ -549,6 +549,10 @@ export default function App() {
   const [epicFilter, setEpicFilter] = useState<string>("all");
   const [showNewEpic, setShowNewEpic] = useState(false);
   const [newEpicTitle, setNewEpicTitle] = useState("");
+  const [showTrelloImport, setShowTrelloImport] = useState(false);
+  const [trelloBoard, setTrelloBoard] = useState("");
+  const [trelloResult, setTrelloResult] = useState("");
+  const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -672,6 +676,24 @@ export default function App() {
     loadEpics();
   };
 
+  const importTrello = async () => {
+    if (!trelloBoard.trim() || trelloBusy) return;
+    setTrelloBusy(true);
+    setTrelloResult("");
+    try {
+      const result = await api(`/api/projects/${project}/imports/trello`, {
+        method: "POST",
+        body: JSON.stringify({ board_id: trelloBoard.trim() }),
+      }, token);
+      setTrelloResult(result.message);
+      await Promise.all([loadTasks(), loadEpics()]);
+    } catch (error: unknown) {
+      setTrelloResult(error instanceof Error ? error.message : "Не удалось импортировать доску");
+    } finally {
+      setTrelloBusy(false);
+    }
+  };
+
   const patchTaskEpic = async (taskId: number, epicId: number | null) => {
     await api(`/api/tasks/${taskId}`, {
       method: "PATCH",
@@ -782,6 +804,16 @@ export default function App() {
             <Button size="sm" variant="outline" onClick={() => setShowNewEpic(true)}>
               <Layers /> Эпик
             </Button>
+          )}
+          {showTrelloImport ? (
+            <form className="flex flex-wrap items-center gap-1" onSubmit={(e) => { e.preventDefault(); importTrello(); }}>
+              <Input className="h-8 w-44" aria-label="ID доски Trello" placeholder="ID доски Trello" value={trelloBoard} onChange={(e) => setTrelloBoard(e.target.value)} />
+              <Button size="sm" type="submit" disabled={trelloBusy || !trelloBoard.trim()}>{trelloBusy ? "Импортируем" : "Импортировать"}</Button>
+              <Button size="sm" variant="ghost" type="button" onClick={() => { setShowTrelloImport(false); setTrelloResult(""); }}>Закрыть</Button>
+              {trelloResult && <span role="status" className="text-sm">{trelloResult}</span>}
+            </form>
+          ) : (
+            <Button size="sm" variant="outline" disabled={!project} onClick={() => setShowTrelloImport(true)}>Импорт Trello</Button>
           )}
           <div className="flex gap-1">
             <Button variant={view === "kanban" ? "default" : "ghost"} size="sm" onClick={() => setView("kanban")}>
