@@ -266,7 +266,16 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; allTasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => Promise<void> }) {
+function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect, onOpen, onMove }: {
+  tasks: Task[];
+  allTasks: Task[];
+  epics: Epic[];
+  selected: Set<number>;
+  selectionDisabled: boolean;
+  onSelect: (id: number, checked: boolean) => void;
+  onOpen: (id: number) => void;
+  onMove: (id: number, dir: number) => Promise<void>;
+}) {
   const taskButtons = useRef(new Map<number, HTMLButtonElement>());
   const pendingFocus = useRef<{ id: number; status: string } | null>(null);
   const moving = useRef(false);
@@ -286,7 +295,7 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
 
   const moveTask = async (task: Task, direction: number, restoreFocus: boolean) => {
     const target = COLUMNS[idx(task.status) + direction];
-    if (!target || moving.current) return;
+    if (!target || moving.current || selectionDisabled) return;
     moving.current = true;
     setMoveError("");
     if (restoreFocus) {
@@ -333,6 +342,14 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
               return (
                 <Card key={t.id}>
                   <CardContent className="p-3 space-y-2">
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      aria-label={`Выбрать задачу ${t.title} #${t.id}`}
+                      checked={selected.has(t.id)}
+                      disabled={selectionDisabled}
+                      onChange={(event) => onSelect(t.id, event.target.checked)}
+                    />
                     <button
                       ref={(element) => {
                         if (element) taskButtons.current.set(t.id, element);
@@ -372,10 +389,10 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
                       </div>
                     )}
                     <div className="flex gap-1">
-                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} влево`} disabled={i === 0} onClick={() => void moveTask(t, -1, false)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} влево`} disabled={selectionDisabled || i === 0} onClick={() => void moveTask(t, -1, false)}>
                         ←
                       </Button>
-                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} вправо`} disabled={i === COLUMNS.length - 1} onClick={() => void moveTask(t, 1, false)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} вправо`} disabled={selectionDisabled || i === COLUMNS.length - 1} onClick={() => void moveTask(t, 1, false)}>
                         →
                       </Button>
                     </div>
@@ -761,6 +778,10 @@ function ProjectWorkspace({
   const [bitrixGroup, setBitrixGroup] = useState("");
   const [bitrixBusy, setBitrixBusy] = useState(false);
   const [bitrixMessage, setBitrixMessage] = useState("");
+  const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState("backlog");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
   const newTaskInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -853,10 +874,72 @@ function ProjectWorkspace({
   const visibleTasks = tasks.filter((t) =>
     epicFilter === "all" ? true : epicFilter === "none" ? !t.epic_id : t.epic_id === Number(epicFilter),
   );
+  const selectedVisibleTasks = visibleTasks.filter((task) => selectedTasks.has(task.id));
 
   useEffect(() => {
     loadTasks();
   }, [loadTasks, project]);
+
+  const selectTask = (id: number, checked: boolean) => {
+    setSelectedTasks((previous) => {
+      const next = new Set(previous);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+    setBulkMessage("");
+  };
+
+  const moveSelectedTasks = async () => {
+    if (bulkBusy || selectedVisibleTasks.length === 0) {
+      return;
+    }
+    setBulkBusy(true);
+    setBulkMessage("");
+    const moved: number[] = [];
+    const failed: number[] = [];
+    let unchanged = 0;
+    for (const task of selectedVisibleTasks) {
+      if (task.status === bulkStatus) {
+        unchanged++;
+        continue;
+      }
+      try {
+        await api(`/api/tasks/${task.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: bulkStatus }),
+        }, token);
+        moved.push(task.id);
+      } catch {
+        failed.push(task.id);
+      }
+    }
+    setTasks((previous) => previous.map((task) => {
+      if (moved.includes(task.id)) {
+        return { ...task, status: bulkStatus };
+      }
+      return task;
+    }));
+    setSelectedTasks(new Set(failed));
+    let message = `Перемещено: ${moved.length}.`;
+    if (unchanged > 0) {
+      message += ` Уже в выбранном статусе: ${unchanged}.`;
+    }
+    if (failed.length > 0) {
+      const ids = failed.map((id) => `#${id}`).join(", ");
+      message += ` Не удалось переместить: ${ids}. Проверь состояние задач и повтори.`;
+    }
+    try {
+      await loadTasks();
+    } catch {
+      message += " Не удалось обновить список задач.";
+    }
+    setBulkMessage(message);
+    setBulkBusy(false);
+  };
 
   const move = async (id: number, dir: number) => {
     const t = tasks.find((x) => x.id === id);
@@ -1013,7 +1096,10 @@ function ProjectWorkspace({
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={project}
+            disabled={bulkBusy}
             onChange={(e) => {
+              setSelectedTasks(new Set());
+              setBulkMessage("");
               setProject(e.target.value);
               localStorage.setItem("akhflow.project", e.target.value);
             }}
@@ -1043,7 +1129,12 @@ function ProjectWorkspace({
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={epicFilter}
-            onChange={(e) => setEpicFilter(e.target.value)}
+            disabled={bulkBusy}
+            onChange={(e) => {
+              setSelectedTasks(new Set());
+              setBulkMessage("");
+              setEpicFilter(e.target.value);
+            }}
           >
             <option value="all">Все эпики</option>
             <option value="none">Без эпика</option>
@@ -1151,7 +1242,45 @@ function ProjectWorkspace({
         </div>
         <p className="text-sm text-muted-foreground">Alt+N: перейти к созданию задачи.</p>
 
-        {view === "kanban" && <Kanban tasks={visibleTasks} allTasks={tasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
+        {(view === "kanban" || view === "list") && (
+          <section aria-label="Массовые операции" className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bulkBusy || visibleTasks.length === 0}
+              onClick={() => setSelectedTasks(new Set(visibleTasks.map((task) => task.id)))}
+            >
+              Выбрать видимые
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bulkBusy || selectedVisibleTasks.length === 0}
+              onClick={() => setSelectedTasks(new Set())}
+            >
+              Снять выбор
+            </Button>
+            <span>Выбрано: {selectedVisibleTasks.length}</span>
+            <label htmlFor="bulk-status">Статус</label>
+            <select
+              id="bulk-status"
+              className="h-8 rounded-md border bg-transparent px-2 text-sm"
+              value={bulkStatus}
+              disabled={bulkBusy}
+              onChange={(event) => setBulkStatus(event.target.value)}
+            >
+              {COLUMNS.map((column) => <option key={column.id} value={column.id}>{column.label}</option>)}
+            </select>
+            <Button size="sm" disabled={bulkBusy || selectedVisibleTasks.length === 0} onClick={moveSelectedTasks}>
+              {bulkBusy ? "Перемещаем…" : "Переместить выбранные"}
+            </Button>
+            {bulkMessage && <p role="status" className="w-full text-sm">{bulkMessage}</p>}
+          </section>
+        )}
+
+        {view === "kanban" && (
+          <Kanban tasks={visibleTasks} allTasks={tasks} epics={epics} selected={selectedTasks} selectionDisabled={bulkBusy} onSelect={selectTask} onOpen={setOpenTaskId} onMove={move} />
+        )}
 
         {view === "dashboard" && (
           project
@@ -1165,6 +1294,7 @@ function ProjectWorkspace({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
+                    <th className="p-3 font-medium">Выбор</th>
                     <th className="p-3 font-medium">ID</th>
                     <th className="p-3 font-medium">Задача</th>
                     <th className="p-3 font-medium">Статус</th>
@@ -1176,6 +1306,15 @@ function ProjectWorkspace({
                 <tbody>
                   {visibleTasks.map((t) => (
                     <tr key={t.id} className="border-b last:border-0">
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Выбрать задачу ${t.title} #${t.id}`}
+                          checked={selectedTasks.has(t.id)}
+                          disabled={bulkBusy}
+                          onChange={(event) => selectTask(t.id, event.target.checked)}
+                        />
+                      </td>
                       <td className="p-3 text-muted-foreground">{t.id}</td>
                       <td className="p-3">
                         <button className="hover:underline" onClick={() => setOpenTaskId(t.id)}>{t.title}</button>
