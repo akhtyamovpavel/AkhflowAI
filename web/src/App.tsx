@@ -261,13 +261,13 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function Kanban({ tasks, epics, onOpen, onMove }: { tasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => void }) {
+function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; allTasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => void }) {
   const idx = (s: string) => COLUMNS.findIndex((c) => c.id === s);
   const overdue = (t: Task) =>
     !!t.due_date && t.status !== "done" && new Date(`${t.due_date}T23:59:59`) < new Date();
   const blockedCount = (t: Task) =>
     (t.depends_on ?? []).filter((id) => {
-      const dep = tasks.find((x) => x.id === id);
+      const dep = allTasks.find((x) => x.id === id);
       return dep && dep.status !== "done";
     }).length;
   return (
@@ -977,7 +977,7 @@ export default function App() {
           <Button size="sm" onClick={createTask}><Plus /> Добавить</Button>
         </div>
 
-        {view === "kanban" && <Kanban tasks={visibleTasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
+        {view === "kanban" && <Kanban tasks={visibleTasks} allTasks={tasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
 
         {view === "dashboard" && (
           project
