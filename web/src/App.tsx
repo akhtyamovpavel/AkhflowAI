@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { QuickSearch } from "@/components/QuickSearch";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -580,6 +581,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksProject, setTasksProject] = useState("");
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -588,6 +590,7 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [epics, setEpics] = useState<Epic[]>([]);
+  const [epicsProject, setEpicsProject] = useState("");
   const [epicFilter, setEpicFilter] = useState<string>("all");
   const [showNewEpic, setShowNewEpic] = useState(false);
   const [newEpicTitle, setNewEpicTitle] = useState("");
@@ -621,6 +624,7 @@ export default function App() {
     if (!token || !project) return;
     const data: Task[] = (await api(`/api/projects/${project}/tasks`, {}, token)) ?? [];
     setTasks(data);
+    setTasksProject(project);
   }, [token, project]);
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
@@ -670,6 +674,7 @@ export default function App() {
     if (!token || !project) return;
     const data: Epic[] = (await api(`/api/projects/${project}/epics`, {}, token)) ?? [];
     setEpics(data);
+    setEpicsProject(project);
   }, [token, project]);
 
   useEffect(() => {
@@ -915,6 +920,19 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {project && (
+          <QuickSearch
+            key={project}
+            tasks={tasksProject === project ? tasks : []}
+            epics={epicsProject === project ? epics : []}
+            ready={tasksProject === project && epicsProject === project}
+            onTaskOpen={setOpenTaskId}
+            onEpicOpen={(id) => {
+              setEpicFilter(String(id));
+              setView("kanban");
+            }}
+          />
+        )}
         {project && (
           <div className="space-y-2">
             <Button size="sm" variant="outline" onClick={() => setShowBitrixImport(!showBitrixImport)}>
