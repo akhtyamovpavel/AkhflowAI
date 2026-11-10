@@ -7,18 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/store"
+	"akhflow.ai/akhflow/internal/testdb"
 )
 
 func TestImportAkhcheckHTTP(t *testing.T) {
-	dsn := os.Getenv("AKHFLOW_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("AKHFLOW_TEST_DATABASE_URL must point to a disposable database")
-	}
+	dsn := testdb.Schema(t, "AKHFLOW_TEST_DATABASE_URL")
 	db, err := store.New(dsn)
 	if err != nil {
 		t.Fatal(err)

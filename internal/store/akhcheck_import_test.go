@@ -3,19 +3,16 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/akhcheck"
+	"akhflow.ai/akhflow/internal/testdb"
 )
 
 func TestAkhcheckImportDatabase(t *testing.T) {
-	dsn := os.Getenv("AKHFLOW_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("AKHFLOW_TEST_DATABASE_URL must point to a disposable database")
-	}
+	dsn := testdb.Schema(t, "AKHFLOW_TEST_DATABASE_URL")
 	ctx := context.Background()
 	db, err := New(dsn)
 	if err != nil {
