@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
@@ -240,7 +242,10 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Akhflow-AI</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Akhflow-AI</CardTitle>
+            <ThemeToggle />
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {mode === "register" && (
@@ -269,9 +274,51 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   selectionDisabled: boolean;
   onSelect: (id: number, checked: boolean) => void;
   onOpen: (id: number) => void;
-  onMove: (id: number, dir: number) => void;
+  onMove: (id: number, dir: number) => Promise<void>;
 }) {
+  const taskButtons = useRef(new Map<number, HTMLButtonElement>());
+  const pendingFocus = useRef<{ id: number; status: string } | null>(null);
+  const moving = useRef(false);
+  const [moveError, setMoveError] = useState("");
   const idx = (s: string) => COLUMNS.findIndex((c) => c.id === s);
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    const task = tasks.find((item) => item.id === pending.id);
+    if (task?.status === pending.status) {
+      if (document.activeElement === document.body) {
+        taskButtons.current.get(pending.id)?.focus();
+      }
+      pendingFocus.current = null;
+    }
+  }, [tasks]);
+
+  const moveTask = async (task: Task, direction: number, restoreFocus: boolean) => {
+    const target = COLUMNS[idx(task.status) + direction];
+    if (!target || moving.current || selectionDisabled) return;
+    moving.current = true;
+    setMoveError("");
+    if (restoreFocus) {
+      pendingFocus.current = { id: task.id, status: target.id };
+    }
+    try {
+      await onMove(task.id, direction);
+    } catch (error: unknown) {
+      pendingFocus.current = null;
+      const message = error instanceof Error ? error.message : "Не удалось переместить задачу";
+      setMoveError(message);
+    } finally {
+      moving.current = false;
+    }
+  };
+
+  const handleTaskKey = (event: ReactKeyboardEvent<HTMLButtonElement>, task: Task) => {
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    void moveTask(task, direction, true);
+  };
   const overdue = (t: Task) =>
     !!t.due_date && t.status !== "done" && new Date(`${t.due_date}T23:59:59`) < new Date();
   const blockedCount = (t: Task) =>
@@ -280,6 +327,9 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
       return dep && dep.status !== "done";
     }).length;
   return (
+    <>
+    <p id="kanban-keyboard-help" className="text-sm text-muted-foreground">Выбери название карточки и нажми ← или →, чтобы изменить её статус.</p>
+    {moveError && <p role="alert" className="text-sm text-destructive">{moveError}</p>}
     <div className="grid grid-cols-4 gap-4">
       {COLUMNS.map((col) => (
         <div key={col.id} className="space-y-2">
@@ -300,7 +350,17 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
                       disabled={selectionDisabled}
                       onChange={(event) => onSelect(t.id, event.target.checked)}
                     />
-                    <button className="text-left text-sm font-medium hover:underline" onClick={() => onOpen(t.id)}>
+                    <button
+                      ref={(element) => {
+                        if (element) taskButtons.current.set(t.id, element);
+                        else taskButtons.current.delete(t.id);
+                      }}
+                      aria-describedby="kanban-keyboard-help"
+                      aria-keyshortcuts="ArrowLeft ArrowRight"
+                      className="text-left text-sm font-medium hover:underline"
+                      onClick={() => onOpen(t.id)}
+                      onKeyDown={(event) => handleTaskKey(event, t)}
+                    >
                       {t.title}
                     </button>
                     <div className="flex items-center justify-between">
@@ -329,10 +389,10 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
                       </div>
                     )}
                     <div className="flex gap-1">
-                      <Button variant="outline" size="sm" disabled={i === 0} onClick={() => onMove(t.id, -1)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} влево`} disabled={selectionDisabled || i === 0} onClick={() => void moveTask(t, -1, false)}>
                         ←
                       </Button>
-                      <Button variant="outline" size="sm" disabled={i === COLUMNS.length - 1} onClick={() => onMove(t.id, 1)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} вправо`} disabled={selectionDisabled || i === COLUMNS.length - 1} onClick={() => void moveTask(t, 1, false)}>
                         →
                       </Button>
                     </div>
@@ -343,6 +403,7 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
         </div>
       ))}
     </div>
+    </>
   );
 }
 
@@ -694,7 +755,10 @@ function ProjectWorkspace({
   const [tasksProject, setTasksProject] = useState("");
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
+  const [busyChats, setBusyChats] = useState<Set<number>>(() => new Set());
+  const pendingChats = useRef(new Set<number>());
+  const messageRequests = useRef(new Map<number, number>());
   const [input, setInput] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
@@ -710,7 +774,6 @@ function ProjectWorkspace({
   const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
   const [showBitrixImport, setShowBitrixImport] = useState(false);
   const [bitrixGroup, setBitrixGroup] = useState("");
   const [bitrixBusy, setBitrixBusy] = useState(false);
@@ -719,6 +782,20 @@ function ProjectWorkspace({
   const [bulkStatus, setBulkStatus] = useState("backlog");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
+  const newTaskInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusNewTask = (event: KeyboardEvent) => {
+      if (!token || !project || openTaskId || showNewProject || showNewEpic || showTrelloImport || showBitrixImport) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat || event.code !== "KeyN") return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("form, input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='dialog']")) return;
+      event.preventDefault();
+      newTaskInput.current?.focus();
+    };
+    window.addEventListener("keydown", focusNewTask);
+    return () => window.removeEventListener("keydown", focusNewTask);
+  }, [token, project, openTaskId, showNewProject, showNewEpic, showTrelloImport, showBitrixImport]);
 
   const loadTasks = useCallback(async () => {
     if (!token || !project) return;
@@ -752,8 +829,15 @@ function ProjectWorkspace({
 
   const loadMessages = useCallback(
     async (chatId: number) => {
+      if (pendingChats.current.has(chatId)) {
+        return;
+      }
+      const request = (messageRequests.current.get(chatId) ?? 0) + 1;
+      messageRequests.current.set(chatId, request);
       const data: ChatMessage[] = (await api(`/api/chats/${chatId}/messages`, {}, token)) ?? [];
-      setMessages(data);
+      if (messageRequests.current.get(chatId) === request) {
+        setMessagesByChat((current) => ({ ...current, [chatId]: data }));
+      }
     },
     [token],
   );
@@ -764,7 +848,6 @@ function ProjectWorkspace({
 
   useEffect(() => {
     if (activeChat) loadMessages(activeChat);
-    else setMessages([]);
   }, [activeChat, loadMessages]);
 
   const loadEpics = useCallback(async () => {
@@ -865,7 +948,7 @@ function ProjectWorkspace({
     const target = COLUMNS[i + dir];
     if (!target) return;
     await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: target.id }) }, token);
-    loadTasks();
+    await loadTasks();
   };
 
   const createProject = async () => {
@@ -960,28 +1043,50 @@ function ProjectWorkspace({
   };
 
   const askAgent = async () => {
-    if (!input.trim() || busy || !activeChat) return;
+    if (!input.trim() || !activeChat || pendingChats.current.has(activeChat)) return;
+    const chatId = activeChat;
     const text = input.trim();
     setInput("");
-    setBusy(true);
+    pendingChats.current.add(chatId);
+    setBusyChats((current) => new Set(current).add(chatId));
+    messageRequests.current.set(chatId, (messageRequests.current.get(chatId) ?? 0) + 1);
     const tempId = Date.now();
-    setMessages((m) => [...m, { id: tempId, role: "user", content: text }]);
+    setMessagesByChat((current) => ({
+      ...current,
+      [chatId]: [...(current[chatId] ?? []), { id: tempId, role: "user", content: text }],
+    }));
+    let sent = false;
     try {
-      const data = await api(`/api/chats/${activeChat}/messages`, {
+      const data = await api(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
       }, token);
-      setMessages((m) => [
-        ...m,
-        { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls },
-      ]);
+      setMessagesByChat((current) => ({
+        ...current,
+        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls }],
+      }));
+      sent = true;
     } catch (e: any) {
-      setMessages((m) => [...m, { id: tempId + 1, role: "agent", content: `Ошибка: ${e.message}` }]);
+      setMessagesByChat((current) => ({
+        ...current,
+        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: `Ошибка: ${e.message}` }],
+      }));
     }
-    setBusy(false);
+    pendingChats.current.delete(chatId);
+    setBusyChats((current) => {
+      const next = new Set(current);
+      next.delete(chatId);
+      return next;
+    });
+    if (sent) {
+      void loadMessages(chatId).catch(() => {});
+    }
     loadTasks();
     loadChats();
   };
+
+  const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];
+  const busy = activeChat ? busyChats.has(activeChat) : false;
 
   return (
     <div className="min-h-screen bg-background">
@@ -1079,6 +1184,7 @@ function ProjectWorkspace({
             </Button>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             <EmailNotifications token={token} request={api} />
             <Button variant="ghost" size="sm" onClick={() => { saveToken(null); }}>Выйти</Button>
           </div>
@@ -1124,6 +1230,8 @@ function ProjectWorkspace({
         )}
         <div className="flex gap-2">
           <Input
+            ref={newTaskInput}
+            aria-keyshortcuts="Alt+N"
             className="max-w-sm"
             placeholder="Новая задача..."
             value={newTitle}
@@ -1132,6 +1240,7 @@ function ProjectWorkspace({
           />
           <Button size="sm" onClick={createTask}><Plus /> Добавить</Button>
         </div>
+        <p className="text-sm text-muted-foreground">Alt+N: перейти к созданию задачи.</p>
 
         {(view === "kanban" || view === "list") && (
           <section aria-label="Массовые операции" className="flex flex-wrap items-center gap-2">
@@ -1311,6 +1420,7 @@ function ProjectWorkspace({
 
       {openTaskId && (
         <TaskDetail
+          key={openTaskId}
           taskId={openTaskId}
           epics={epics}
           members={members}
