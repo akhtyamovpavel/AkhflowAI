@@ -23,11 +23,15 @@ type Subscription struct {
 // Bus is an in-memory pub/sub for project-scoped events (SSE notifications).
 // Publish never blocks: slow subscribers drop events.
 type Bus struct {
-	mu   sync.RWMutex
-	subs []*Subscription
+	mu      sync.RWMutex
+	subs    []*Subscription
+	forward func(Event)
 }
 
 func NewBus() *Bus { return &Bus{} }
+
+// NewForwardingBus also enqueues events for another process.
+func NewForwardingBus(forward func(Event)) *Bus { return &Bus{forward: forward} }
 
 // Subscribe returns a subscription for one project; projectID 0 subscribes to all projects.
 func (b *Bus) Subscribe(projectID int64) *Subscription {
@@ -54,7 +58,6 @@ func (b *Bus) Publish(e Event) {
 		e.At = time.Now()
 	}
 	b.mu.RLock()
-	defer b.mu.RUnlock()
 	for _, s := range b.subs {
 		if s.ProjectID != 0 && s.ProjectID != e.ProjectID {
 			continue
@@ -63,5 +66,9 @@ func (b *Bus) Publish(e Event) {
 		case s.Ch <- e:
 		default:
 		}
+	}
+	b.mu.RUnlock()
+	if b.forward != nil {
+		b.forward(e)
 	}
 }

@@ -71,6 +71,11 @@ func runAPI() error {
 	auth := &server.Auth{Store: st, Secret: []byte(secret), TokenTTL: 24 * time.Hour}
 	llmClient := llm.NewClient(os.Getenv("OLLAMA_HOST"), os.Getenv("AGENT_MODEL"))
 	bus := events.NewBus()
+	listenCtx, stopListener := context.WithCancel(context.Background())
+	defer stopListener()
+	if err := events.Listen(listenCtx, dsn, bus); err != nil {
+		log.Print("MCP event listener unavailable; retrying")
+	}
 	srv := server.New(st, auth, llmClient, bus)
 	emailConfig, emailEnabled, err := email.FromEnv()
 	if err != nil {
@@ -117,7 +122,12 @@ func runMCP() error {
 			actor = u.Email
 		}
 	}
-	srv := &mcp.Server{Store: st, UserID: userID, Actor: actor, Version: "0.1.0"}
+	publisher, err := events.NewPublisher(dsn)
+	if err != nil {
+		return err
+	}
+	defer publisher.Close()
+	srv := &mcp.Server{Store: st, UserID: userID, Actor: actor, Version: "0.1.0", Bus: events.NewForwardingBus(publisher.Publish)}
 	if mcpHTTPAddr != "" {
 		apiKey := os.Getenv("MCP_API_KEY")
 		if apiKey == "" {
