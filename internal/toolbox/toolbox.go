@@ -135,48 +135,6 @@ func publishEvent(d Deps, e events.Event) {
 	}
 }
 
-// SpawnNextOccurrence creates the next occurrence of a recurring task.
-// When inheritRecurring is true the new task continues the chain (completion hook);
-// otherwise it is a one-off occurrence (scheduler).
-func SpawnNextOccurrence(ctx context.Context, d Deps, orig *domain.Task, inheritRecurring bool) (int64, error) {
-	next := domain.Task{
-		ProjectID:   orig.ProjectID,
-		ParentID:    orig.ParentID,
-		Title:       orig.Title,
-		Description: orig.Description,
-		Status:      domain.StatusTodo,
-		Priority:    orig.Priority,
-		EstimateMin: orig.EstimateMin,
-		AuthorID:    orig.AuthorID,
-		AssigneeID:  orig.AssigneeID,
-		Labels:      orig.Labels,
-	}
-	if inheritRecurring {
-		next.Recurring = orig.Recurring
-	}
-	if orig.DueDate != nil {
-		if step, ok := domain.RecurrenceStep(orig.Recurring); ok {
-			nd := step(*orig.DueDate)
-			next.DueDate = &nd
-		}
-	}
-	id, err := d.Store.CreateTask(ctx, next)
-	if err != nil {
-		return 0, err
-	}
-	eid := id
-	if err := d.Store.Audit(ctx, d.Actor, "recur_task", "task", &eid, map[string]any{"from": orig.ID}); err != nil {
-		return 0, err
-	}
-	if d.ActorID != 0 {
-		if _, err := d.Store.AddComment(ctx, orig.ID, d.ActorID, fmt.Sprintf("повторение: создана задача #%d", id)); err != nil {
-			return 0, err
-		}
-	}
-	publishEvent(d, events.Event{Type: "task_created", ProjectID: orig.ProjectID, TaskID: id, Title: orig.Title, Actor: d.Actor})
-	return id, nil
-}
-
 var Registry = []Tool{
 	{
 		Name:        "list_attachments",
@@ -372,13 +330,8 @@ var Registry = []Tool{
 					}
 					return Result{}, fmt.Errorf("task %d has unfinished dependencies: %s", id, strings.Join(titles, ", "))
 				}
-				if t.Recurring != "" {
-					if _, err := SpawnNextOccurrence(ctx, d, t, true); err != nil {
-						return Result{}, err
-					}
-				}
 			}
-			statusChanged, err := d.Store.UpdateTaskWithStatusChange(ctx, id, []string{"status"}, []any{status})
+			transition, err := d.Store.UpdateTaskWithRecurrence(ctx, id, []string{"status"}, []any{status}, d.Actor, d.ActorID)
 			if err != nil {
 				return Result{}, err
 			}
@@ -386,7 +339,10 @@ var Registry = []Tool{
 			if err := d.Store.Audit(ctx, d.Actor, "move_task", "task", &eid, map[string]any{"status": status}); err != nil {
 				return Result{}, err
 			}
-			if statusChanged {
+			if transition.Next != nil {
+				publishEvent(d, events.Event{Type: "task_created", ProjectID: transition.Next.ProjectID, TaskID: transition.Next.ID, Title: transition.Next.Title, Actor: d.Actor})
+			}
+			if transition.StatusChanged {
 				publishEvent(d, events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Status: status, Actor: d.Actor})
 			}
 			return Result{Ok: true, Message: fmt.Sprintf("task %d moved to %s", id, status)}, nil
