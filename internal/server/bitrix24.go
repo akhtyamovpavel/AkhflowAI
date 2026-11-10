@@ -25,7 +25,7 @@ func (s *Server) importBitrixTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "import failed"})
 		return
 	}
-	deps := toolbox.Deps{Store: s.Store, ActorID: userID, Bus: s.Bus}
+	deps := toolbox.Deps{Store: s.Store, ActorID: userID, Actor: s.Auth.ActorName(r.Context()), Bus: s.Bus}
 	result, err := toolbox.ByName("import_bitrix24_tasks").Handler(r.Context(), deps, args)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

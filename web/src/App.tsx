@@ -992,8 +992,26 @@ function ProjectWorkspace({
       }
       refreshing = false;
     };
+    const refreshEpics = async () => {
+      try {
+        const path = `/api/projects/${encodeURIComponent(project)}/epics`;
+        const response = await fetch(API + path, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const data: Epic[] = await response.json();
+        if (!controller.signal.aborted) {
+          setEpics(data ?? []);
+          setEpicsProject(project);
+        }
+      } catch {
+        // A later import or project change refreshes the epics.
+      }
+    };
     const labels: Record<string, string> = {
       task_created: "Создана задача",
+      tasks_imported: "Данные проекта импортированы",
       task_moved: "Изменён статус задачи",
       task_updated: "Изменена задача",
       task_deleted: "Удалена задача",
@@ -1008,6 +1026,7 @@ function ProjectWorkspace({
         if (controller.signal.aborted || !value || typeof value !== "object") return;
         const event = value as Record<string, unknown>;
         if (event.project_id !== projectId || typeof event.type !== "string" || !Object.hasOwn(labels, event.type)) return;
+        if (event.type === "tasks_imported") void refreshEpics();
         const title = typeof event.title === "string" ? event.title : "";
         const text = title ? `${labels[event.type]}: ${title}` : labels[event.type];
         const validTaskId = typeof event.task_id === "number" && Number.isSafeInteger(event.task_id) && event.task_id > 0;

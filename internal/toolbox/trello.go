@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"akhflow.ai/akhflow/internal/events"
 	"akhflow.ai/akhflow/internal/trello"
 )
 
@@ -53,6 +54,9 @@ func importTrello(ctx context.Context, d Deps, args json.RawMessage) (Result, er
 	imported, err := d.Store.ImportTrello(ctx, project.ID, d.ActorID, board)
 	if err != nil {
 		return Result{}, errors.New("не удалось сохранить импорт Trello")
+	}
+	if imported.TasksCreated > 0 || imported.ListsCreated > 0 {
+		publishEvent(d, events.Event{Type: "tasks_imported", ProjectID: project.ID, Actor: d.Actor})
 	}
 	message := fmt.Sprintf("Импортировано задач: %d, пропущено существующих: %d, создано эпиков: %d", imported.TasksCreated, imported.TasksSkipped, imported.ListsCreated)
 	if imported.TasksUngrouped > 0 {
