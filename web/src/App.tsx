@@ -552,6 +552,10 @@ export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showBitrixImport, setShowBitrixImport] = useState(false);
+  const [bitrixGroup, setBitrixGroup] = useState("");
+  const [bitrixBusy, setBitrixBusy] = useState(false);
+  const [bitrixMessage, setBitrixMessage] = useState("");
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -690,6 +694,29 @@ export default function App() {
     loadTasks();
   };
 
+  const importBitrixTasks = async () => {
+    if (!project || bitrixBusy) return;
+    const groupId = bitrixGroup.trim() ? Number(bitrixGroup) : 0;
+    if (!Number.isSafeInteger(groupId) || groupId < 0) {
+      setBitrixMessage("Укажи корректный номер группы Bitrix24");
+      return;
+    }
+    setBitrixBusy(true);
+    setBitrixMessage("");
+    try {
+      const result = await api(`/api/projects/${project}/imports/bitrix24`, {
+        method: "POST",
+        body: JSON.stringify({ group_id: groupId }),
+      }, token);
+      setBitrixMessage(result.message);
+      await loadTasks();
+    } catch {
+      setBitrixMessage("Не удалось импортировать задачи. Проверь настройки подключения и повтори попытку.");
+    } finally {
+      setBitrixBusy(false);
+    }
+  };
+
   const newChat = async () => {
     if (!project) return;
     const data = await api(`/api/projects/${project}/chats`, { method: "POST", body: "{}" }, token);
@@ -801,6 +828,21 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {project && (
+          <div className="space-y-2">
+            <Button size="sm" variant="outline" onClick={() => setShowBitrixImport(!showBitrixImport)}>
+              Импорт из Bitrix24
+            </Button>
+            {showBitrixImport && (
+              <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); importBitrixTasks(); }}>
+                <label htmlFor="bitrix-group" className="text-sm">Номер группы (необязательно)</label>
+                <Input id="bitrix-group" className="w-40" type="number" min="1" step="1" value={bitrixGroup} onChange={(e) => setBitrixGroup(e.target.value)} />
+                <Button size="sm" type="submit" disabled={bitrixBusy}>{bitrixBusy ? "Импортируем" : "Импортировать"}</Button>
+              </form>
+            )}
+            {bitrixMessage && <p role="status" className="text-sm">{bitrixMessage}</p>}
+          </div>
+        )}
         {project && (
           <DeadlineReminders
             key={`${token}:${project}`}
