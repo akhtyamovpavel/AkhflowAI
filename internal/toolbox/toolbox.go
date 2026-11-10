@@ -493,6 +493,7 @@ var Registry = []Tool{
 				if err := d.Store.UpdateTask(ctx, id, []string{"assignee_id"}, []any{nil}); err != nil {
 					return Result{}, err
 				}
+				publishEvent(d, events.Event{Type: "task_updated", ProjectID: task.ProjectID, TaskID: id, Title: task.Title, Actor: d.Actor})
 				return Result{Ok: true, Message: fmt.Sprintf("assignee cleared for task %d", id)}, nil
 			}
 			u, err := d.Store.UserByEmail(ctx, email)
@@ -508,6 +509,7 @@ var Registry = []Tool{
 			if err := d.Store.UpdateTask(ctx, id, []string{"assignee_id"}, []any{u.ID}); err != nil {
 				return Result{}, err
 			}
+			publishEvent(d, events.Event{Type: "task_updated", ProjectID: task.ProjectID, TaskID: id, Title: task.Title, Actor: d.Actor})
 			return Result{Ok: true, Message: fmt.Sprintf("task %d assigned to %s", id, u.Email)}, nil
 		},
 	},
