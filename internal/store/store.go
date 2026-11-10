@@ -203,9 +203,35 @@ func (s *Store) IsMember(ctx context.Context, projectID, userID int64) (bool, er
 	return ok, err
 }
 
+func (s *Store) ProjectRole(ctx context.Context, projectID, userID int64) (string, error) {
+	var role string
+	err := s.db.QueryRow(ctx, `SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return role, err
+}
+
+func (s *Store) SetProjectMemberRole(ctx context.Context, projectID, actorID, userID int64, role string) (bool, error) {
+	var updated int64
+	query := `INSERT INTO project_members(project_id, user_id, role)
+		SELECT $1, $3, $4 WHERE EXISTS (
+			SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2 AND role IN ('owner','admin')
+		) AND EXISTS (SELECT 1 FROM users WHERE id=$3)
+		AND NOT EXISTS (SELECT 1 FROM projects WHERE id=$1 AND owner_id=$3)
+		ON CONFLICT (project_id, user_id) DO UPDATE SET role=EXCLUDED.role
+		WHERE project_members.role <> 'owner'
+		RETURNING user_id`
+	err := s.db.QueryRow(ctx, query, projectID, actorID, userID, role).Scan(&updated)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) ListProjectMembers(ctx context.Context, projectID int64) ([]domain.User, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.email, u.display_name
+		SELECT u.id, u.email, u.display_name, pm.role
 		FROM project_members pm
 		JOIN users u ON u.id = pm.user_id
 		WHERE pm.project_id = $1
@@ -217,7 +243,7 @@ func (s *Store) ListProjectMembers(ctx context.Context, projectID int64) ([]doma
 	out := []domain.User{}
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Role); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
