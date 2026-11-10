@@ -29,7 +29,7 @@ func init() {
 // New tools must explicitly declare their resource and whether they change it.
 func toolAccessPolicy(name string) (projectScoped, readOnly, known bool) {
 	switch name {
-	case "list_tasks", "list_epics":
+	case "list_tasks", "list_epics", "get_agent_usage":
 		return true, true, true
 	case "get_task":
 		return false, true, true
