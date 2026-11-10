@@ -165,4 +165,42 @@ func TestSSEAuthentication(t *testing.T) {
 			}
 		})
 	}
+	t.Run("headers before first event and disconnect cleanup", func(t *testing.T) {
+		finished := make(chan struct{})
+		handler := New(db, auth, nil, bus).Handler()
+		stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(finished)
+			handler.ServeHTTP(w, r)
+		}))
+		defer stream.Close()
+		req, err := http.NewRequest(http.MethodGet, stream.URL+"/api/projects/private/events", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+ownerToken)
+		response, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("headers not received before an event: %v", err)
+		}
+		if response.StatusCode != http.StatusOK {
+			response.Body.Close()
+			t.Fatalf("unexpected status: %d", response.StatusCode)
+		}
+		bus.Publish(events.Event{ProjectID: project, Type: "after_connect"})
+		line, err := bufio.NewReader(response.Body).ReadString('\n')
+		if err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		if !strings.Contains(line, "after_connect") {
+			response.Body.Close()
+			t.Fatalf("event missing after headers: %q", line)
+		}
+		response.Body.Close()
+		select {
+		case <-finished:
+		case <-time.After(3 * time.Second):
+			t.Fatal("SSE handler did not stop after disconnect")
+		}
+	})
 }
