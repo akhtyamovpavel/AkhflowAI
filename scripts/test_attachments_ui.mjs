@@ -18,6 +18,8 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
 const task = { id: 1, title: "Задача", status: "todo", priority: "medium" };
 let attachments = [];
 let uploads = 0;
+let role = "editor";
+let roleFailure = false;
 let browser;
 
 try {
@@ -43,6 +45,12 @@ try {
     let data = [];
     if (requestPath === "/api/projects") {
       data = [{ id: 1, slug: "alpha", name: "Альфа" }];
+    } else if (requestPath === "/api/projects/alpha/role") {
+      if (roleFailure) {
+        await route.fulfill({ status: 503, json: { error: "unavailable" } });
+        return;
+      }
+      data = { role };
     } else if (requestPath === "/api/projects/alpha/tasks") {
       data = [task];
     } else if (requestPath === "/api/tasks/1") {
@@ -50,6 +58,10 @@ try {
     } else if (requestPath === "/api/tasks/1/attachments" && request.method() === "POST") {
       assert.equal(request.headers().authorization, "Bearer fixture-token");
       assert.match(request.headers()["content-type"], /^multipart\/form-data; boundary=/);
+      if (role === "viewer") {
+        await route.fulfill({ status: 403, json: { error: "access denied" } });
+        return;
+      }
       uploads++;
       attachments = [{ id: 7, filename: "file.txt", size_bytes: 7 }];
       data = attachments[0];
@@ -79,7 +91,48 @@ try {
   await page.getByRole("button", { name: "Загрузить", exact: true }).click();
   await page.getByRole("alert").getByText("Размер файла не должен превышать 10 МиБ.").waitFor();
   assert.equal(uploads, 1);
-  console.log("PASS: attachment upload, download, authentication and size limit");
+
+  role = "viewer";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "file.txt (7 байт)" }).waitFor();
+  const viewerDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "file.txt (7 байт)" }).click();
+  assert.equal((await viewerDownload).suggestedFilename(), "file.txt");
+  assert.equal(uploads, 1);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Задача", exact: true }).click();
+  await page.getByRole("button", { name: "file.txt (7 байт)" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Загрузить", exact: true }).count(), 0);
+
+  role = "owner";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor();
+  assert.equal(await page.locator('input[type="file"]').inputValue(), "");
+  role = "editor";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor();
+  await page.locator('input[type="file"]').setInputFiles({ name: "again.txt", mimeType: "text/plain", buffer: Buffer.from("content") });
+  await page.getByRole("button", { name: "Загрузить", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('input[type="file"]')?.value === "");
+  assert.equal(uploads, 2);
+  role = "viewer";
+  await page.locator('input[type="file"]').setInputFiles({ name: "denied.txt", mimeType: "text/plain", buffer: Buffer.from("content") });
+  await page.getByRole("button", { name: "Загрузить", exact: true }).click();
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor({ state: "detached" });
+  assert.equal(uploads, 2);
+  role = "editor";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor();
+  roleFailure = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "file.txt (7 байт)" }).waitFor();
+  roleFailure = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("button", { name: "Загрузить", exact: true }).waitFor();
+  console.log("PASS: attachment roles, role changes, upload, download and size limit");
 } finally {
   if (browser) await browser.close();
   server.kill();
