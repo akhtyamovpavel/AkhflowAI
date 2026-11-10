@@ -16,7 +16,8 @@ services:
 
   api:
     build: .
-    command: sh -c "akhflow migrate && exec akhflow serve api"
+    entrypoint: ["sh", "-c"]
+    command: ["akhflow migrate && exec akhflow serve api"]
     environment:
       DATABASE_URL: postgres://akhflow:akhflow@db:5432/akhflow?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
