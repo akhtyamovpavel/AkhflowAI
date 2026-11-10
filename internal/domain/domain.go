@@ -7,6 +7,7 @@ type User struct {
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
 	CreatedAt   time.Time `json:"created_at"`
+	Role        string    `json:"role,omitempty"`
 }
 
 type Project struct {
@@ -61,25 +62,25 @@ func RecurrenceStep(spec string) (func(time.Time) time.Time, bool) {
 }
 
 type Task struct {
-	ID          int64      `json:"id"`
-	ProjectID   int64      `json:"project_id"`
-	ParentID    *int64     `json:"parent_id,omitempty"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Status      string     `json:"status"`
-	Priority    string     `json:"priority"`
-	EstimateMin *int       `json:"estimate_min,omitempty"`
-	DueDate     *time.Time `json:"due_date,omitempty"`
-	AuthorID    int64      `json:"author_id"`
-	AssigneeID  *int64     `json:"assignee_id,omitempty"`
-	Recurring   string     `json:"recurring,omitempty"`
-	EpicID      *int64     `json:"epic_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-DependsOn   []int64     `json:"depends_on,omitempty"`
+	ID          int64       `json:"id"`
+	ProjectID   int64       `json:"project_id"`
+	ParentID    *int64      `json:"parent_id,omitempty"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Status      string      `json:"status"`
+	Priority    string      `json:"priority"`
+	EstimateMin *int        `json:"estimate_min,omitempty"`
+	DueDate     *time.Time  `json:"due_date,omitempty"`
+	AuthorID    int64       `json:"author_id"`
+	AssigneeID  *int64      `json:"assignee_id,omitempty"`
+	Recurring   string      `json:"recurring,omitempty"`
+	EpicID      *int64      `json:"epic_id,omitempty"`
+	Labels      []string    `json:"labels,omitempty"`
+	DependsOn   []int64     `json:"depends_on,omitempty"`
 	Blocks      []int64     `json:"blocks,omitempty"`
 	Attachment  *Attachment `json:"attachment,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 type Comment struct {
@@ -109,20 +110,20 @@ type Chat struct {
 }
 
 type Attachment struct {
-	ID        int64  `json:"id"`
-	TaskID    int64  `json:"task_id"`
-	Filename  string `json:"filename"`
-	SizeBytes int64  `json:"size_bytes"`
-	StorageKey  string `json:"storage_key"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64     `json:"id"`
+	TaskID     int64     `json:"task_id"`
+	Filename   string    `json:"filename"`
+	SizeBytes  int64     `json:"size_bytes"`
+	StorageKey string    `json:"storage_key"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type AgentMessage struct {
-	ID        int64  `json:"id"`
-	ChatID    int64  `json:"chat_id"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	ToolCalls any    `json:"tool_calls,omitempty"`
+	ID        int64     `json:"id"`
+	ChatID    int64     `json:"chat_id"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	ToolCalls any       `json:"tool_calls,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
