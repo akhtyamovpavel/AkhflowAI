@@ -175,6 +175,46 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
   return res.json();
 }
 
+function AkhcheckImport({ project, token, onImported }: { project: string; token: string | null; onImported: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || !project || !token) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error("Файл больше 4 МБ");
+      const course = JSON.parse(await file.text());
+      const result = await api(`/api/projects/${encodeURIComponent(project)}/imports/akhcheck`, {
+        method: "POST",
+        body: JSON.stringify(course),
+      }, token);
+      await onImported();
+      setMessage(`Добавлено: ${result.created}, уже было: ${result.skipped}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось импортировать файл");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>Импорт Akhcheck</Button>;
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={submit}>
+      <label className="text-sm" htmlFor="akhcheck-course-file">JSON курса Akhcheck</label>
+      <input id="akhcheck-course-file" type="file" accept="application/json,.json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+      <span className="text-xs text-muted-foreground">Сохрани JSON со страницы /api/teaching/course/ID в Akhcheck.</span>
+      <Button size="sm" type="submit" disabled={!file || busy}>Импортировать</Button>
+      <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(false)}>Закрыть</Button>
+      {message && <span className="text-sm" role="status">{message}</span>}
+    </form>
+  );
+}
+
 function Login({ onLogin }: { onLogin: (t: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -755,6 +795,7 @@ export default function App() {
               <Plus /> Проект
             </Button>
           )}
+          {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} />}
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={epicFilter}
