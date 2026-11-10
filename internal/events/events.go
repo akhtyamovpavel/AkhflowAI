@@ -57,6 +57,14 @@ func (b *Bus) Publish(e Event) {
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
+	b.deliver(e)
+	if b.forward != nil {
+		b.forward(e)
+	}
+}
+
+// deliver is used for relayed events to prevent forwarding loops.
+func (b *Bus) deliver(e Event) {
 	b.mu.RLock()
 	for _, s := range b.subs {
 		if s.ProjectID != 0 && s.ProjectID != e.ProjectID {
@@ -68,7 +76,4 @@ func (b *Bus) Publish(e Event) {
 		}
 	}
 	b.mu.RUnlock()
-	if b.forward != nil {
-		b.forward(e)
-	}
 }
