@@ -94,6 +94,8 @@ func TestTrelloImportHTTP(t *testing.T) {
 		}
 		largeCards[i] = map[string]string{"id": fmt.Sprintf("%08x%016x", second, len(largeCards)-i), "idList": "list2", "name": "Card"}
 	}
+	largeCards[999]["idList"] = "archived-list"
+	largeCards[999]["name"] = "Archived list card"
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/1/boards/short123":
@@ -175,7 +177,7 @@ func TestTrelloImportHTTP(t *testing.T) {
 		t.Fatalf("tasks: %+v %v", tasks, err)
 	}
 	first = request(ownerToken, "large123")
-	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"tasks_created":1004`) {
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"tasks_created":1004`) || !strings.Contains(first.Body.String(), `"tasks_ungrouped":1`) {
 		t.Fatalf("large import: %d %s", first.Code, first.Body.String())
 	}
 	second = request(ownerToken, "large123")
@@ -186,4 +188,13 @@ func TestTrelloImportHTTP(t *testing.T) {
 	if err != nil || len(tasks) != 1005 {
 		t.Fatalf("large import task count=%d error=%v", len(tasks), err)
 	}
+	for _, task := range tasks {
+		if task.Title == "Archived list card" {
+			if task.EpicID != nil {
+				t.Fatal("card from an unknown archived list must remain ungrouped")
+			}
+			return
+		}
+	}
+	t.Fatal("card from an unknown archived list was not imported")
 }
