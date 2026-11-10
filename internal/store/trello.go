@@ -11,9 +11,10 @@ import (
 )
 
 type TrelloImportResult struct {
-	ListsCreated int `json:"lists_created"`
-	TasksCreated int `json:"tasks_created"`
-	TasksSkipped int `json:"tasks_skipped"`
+	ListsCreated   int `json:"lists_created"`
+	TasksCreated   int `json:"tasks_created"`
+	TasksSkipped   int `json:"tasks_skipped"`
+	TasksUngrouped int `json:"tasks_ungrouped"`
 }
 
 // ImportTrello preserves local edits on repeat imports. A transaction and a
@@ -29,7 +30,7 @@ func (s *Store) ImportTrello(ctx context.Context, projectID, actorID int64, boar
 	}
 	cards := make(map[string]bool, len(board.Cards))
 	for _, card := range board.Cards {
-		if card.ID == "" || strings.TrimSpace(card.Name) == "" || !lists[card.ListID] || cards[card.ID] {
+		if card.ID == "" || card.ListID == "" || strings.TrimSpace(card.Name) == "" || cards[card.ID] {
 			return result, fmt.Errorf("Trello вернул некорректную карточку")
 		}
 		cards[card.ID] = true
@@ -43,6 +44,7 @@ func (s *Store) ImportTrello(ctx context.Context, projectID, actorID int64, boar
 		return result, err
 	}
 	epicIDs := make(map[string]int64, len(board.Lists))
+	unknownLists := make(map[string]bool)
 	for _, list := range board.Lists {
 		var epicID int64
 		err := tx.QueryRow(ctx, `SELECT epic_id FROM trello_import_lists WHERE project_id=$1 AND board_id=$2 AND list_id=$3`, projectID, board.ID, list.ID).Scan(&epicID)
@@ -71,8 +73,26 @@ func (s *Store) ImportTrello(ctx context.Context, projectID, actorID int64, boar
 			result.TasksSkipped++
 			continue
 		}
+		var epicID *int64
+		id, found := epicIDs[card.ListID]
+		if !found && !unknownLists[card.ListID] {
+			err := tx.QueryRow(ctx, `SELECT epic_id FROM trello_import_lists WHERE project_id=$1 AND board_id=$2 AND list_id=$3`, projectID, board.ID, card.ListID).Scan(&id)
+			if err == nil {
+				epicIDs[card.ListID] = id
+				found = true
+			} else if err == pgx.ErrNoRows {
+				unknownLists[card.ListID] = true
+			} else {
+				return result, err
+			}
+		}
+		if found {
+			epicID = &id
+		} else {
+			result.TasksUngrouped++
+		}
 		var taskID int64
-		err = tx.QueryRow(ctx, `INSERT INTO tasks(project_id,title,description,status,priority,due_date,author_id,epic_id) VALUES($1,$2,$3,'backlog','medium',$4,$5,$6) RETURNING id`, projectID, card.Name, card.Desc, card.Due, actorID, epicIDs[card.ListID]).Scan(&taskID)
+		err = tx.QueryRow(ctx, `INSERT INTO tasks(project_id,title,description,status,priority,due_date,author_id,epic_id) VALUES($1,$2,$3,'backlog','medium',$4,$5,$6) RETURNING id`, projectID, card.Name, card.Desc, card.Due, actorID, epicID).Scan(&taskID)
 		if err != nil {
 			return result, err
 		}
