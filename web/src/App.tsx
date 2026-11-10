@@ -13,6 +13,7 @@ import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
+import { TaskAttachments } from "@/components/TaskAttachments";
 import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
@@ -641,6 +642,7 @@ function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen
               </div>
             )}
           </div>
+          <TaskAttachments taskId={taskId} token={token} apiBase={API} />
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>
