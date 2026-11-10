@@ -40,6 +40,7 @@ try {
     localStorage.setItem("akhflow.project", "alpha");
   });
   const task = { id: 1, title: "Initial title", description: "Saved description", status: "backlog", priority: "medium" };
+  const linkedTask = { ...task, id: 2, title: "Linked task" };
   let mode = "reject";
   let failRefresh = false;
   const writes = [];
@@ -75,9 +76,10 @@ try {
       return;
     }
     let data = [];
-    if (path === "/api/projects") data = [{ id: 1, slug: "alpha", name: "Alpha" }];
-    if (path === "/api/projects/alpha/tasks") data = [task];
-    if (path === "/api/tasks/1") data = { task, comments: [], dependencies: [], blocks: [], history: [] };
+    if (path === "/api/projects") data = [{ id: 1, slug: "alpha", name: "Alpha" }, { id: 2, slug: "beta", name: "Beta" }];
+    if (path === "/api/projects/alpha/tasks" || path === "/api/projects/beta/tasks") data = [task, linkedTask];
+    if (path === "/api/tasks/1") data = { task, comments: [], dependencies: [linkedTask], blocks: [], history: [] };
+    if (path === "/api/tasks/2") data = { task: linkedTask, comments: [], dependencies: [task], blocks: [], history: [] };
     if (path.endsWith("/role")) data = { role: "owner" };
     await route.fulfill({ json: data });
   });
@@ -156,6 +158,62 @@ try {
   await title.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "Keep draft when closing", exact: true }).click();
   mode = "success";
+
+  await title.fill("Cancel without blur save");
+  const writesBeforeCancel = writes.length;
+  await page.getByRole("button", { name: "Отменить изменение заголовка", exact: true }).click();
+  assert.equal(writes.length, writesBeforeCancel, "cancel triggered a blur save");
+  assert.equal(await title.inputValue(), task.title);
+
+  mode = "reject";
+  await title.fill("Draft across navigation");
+  await description.click();
+  await saveError.waitFor();
+  await page.getByRole("button", { name: "#2 Linked task", exact: true }).click();
+  await page.getByRole("button", { name: `#1 ${task.title}`, exact: true }).click();
+  assert.equal(await title.inputValue(), "Draft across navigation", "dependency navigation discarded draft");
+
+  await page.locator("header select").first().selectOption("beta");
+  await page.getByRole("button", { name: task.title, exact: true }).click();
+  assert.equal(await title.inputValue(), task.title, "draft leaked to another project");
+  await page.locator("header select").first().selectOption("alpha");
+  await page.getByRole("button", { name: task.title, exact: true }).click();
+  assert.equal(await title.inputValue(), "Draft across navigation", "project switch discarded draft");
+
+  const changeAccount = async (token) => {
+    await page.evaluate((value) => {
+      localStorage.setItem("akhflow.token", value);
+      window.dispatchEvent(new StorageEvent("storage", { key: "akhflow.token", storageArea: localStorage }));
+    }, token);
+    await page.getByRole("button", { name: task.title, exact: true }).click();
+  };
+  await changeAccount("other-fixture-token");
+  assert.equal(await title.inputValue(), task.title, "draft leaked to another account");
+  await changeAccount("fixture-token");
+  assert.equal(await title.inputValue(), "Draft across navigation", "account switch discarded draft");
+
+  mode = "hold";
+  releasePatch = undefined;
+  await title.fill("Older request");
+  await description.click();
+  await page.getByRole("status").filter({ hasText: "Сохраняем заголовок" }).waitFor();
+  await page.getByRole("button", { name: "#2 Linked task", exact: true }).click();
+  while (!releasePatch) await delay(10);
+  await page.getByRole("button", { name: `#1 ${task.title}`, exact: true }).click();
+  await title.fill("New draft after reopening");
+  const oldSaved = page.waitForResponse((response) => response.url().endsWith("/api/tasks/1") && response.request().method() === "PATCH");
+  mode = "reject";
+  releasePatch();
+  await oldSaved;
+  assert.equal(await title.inputValue(), "New draft after reopening");
+  await description.click();
+  await saveError.waitFor();
+  await page.getByRole("button", { name: "#2 Linked task", exact: true }).click();
+  await page.getByRole("button", { name: `#1 ${task.title}`, exact: true }).click();
+  assert.equal(await title.inputValue(), "New draft after reopening", "old response removed newer cached draft");
+  mode = "success";
+  await page.getByRole("button", { name: /^(Повторить сохранение|Сохранить заголовок)$/ }).click();
+  await page.getByRole("button", { name: "New draft after reopening", exact: true }).waitFor();
 
   failRefresh = true;
   await title.fill("Saved despite refresh failure");

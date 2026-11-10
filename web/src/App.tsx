@@ -453,6 +453,8 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
+const taskTitleDrafts = new Map<string, string>();
+
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
   project: string;
@@ -465,12 +467,16 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   onChanged: () => void;
   request: ApiRequest;
 }) {
+  const token = localStorage.getItem("akhflow.token");
+  const draftKey = JSON.stringify([token, project, taskId]);
+  const initialTitle = taskTitleDrafts.get(draftKey) ?? "";
+  const initialTitleDirty = taskTitleDrafts.has(draftKey);
   const [task, setTask] = useState<Task | null>(null);
-  const [title, setTitle] = useState("");
-  const [titleDirty, setTitleDirty] = useState(false);
+  const [title, setTitle] = useState(initialTitle);
+  const [titleDirty, setTitleDirty] = useState(initialTitleDirty);
   const [titleError, setTitleError] = useState("");
   const [savingTitle, setSavingTitle] = useState(false);
-  const titleDraft = useRef({ value: "", revision: 0, dirty: false });
+  const titleDraft = useRef({ value: initialTitle, revision: 0, dirty: initialTitleDirty });
   const titleSavePending = useRef(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [deps, setDeps] = useState<Task[]>([]);
@@ -483,7 +489,6 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
-  const token = localStorage.getItem("akhflow.token");
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -528,6 +533,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     setTitleError("");
     try {
       await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ title: value }) }, token);
+      if (taskTitleDrafts.get(draftKey) === value) {
+        taskTitleDrafts.delete(draftKey);
+      }
       if (titleDraft.current.revision === revision) {
         titleDraft.current.dirty = false;
         setTitleDirty(false);
@@ -663,6 +671,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             value={title}
             onChange={(e) => {
               const value = e.target.value;
+              taskTitleDrafts.set(draftKey, value);
               titleDraft.current = { value, revision: titleDraft.current.revision + 1, dirty: true };
               setTitle(value);
               setTitleDirty(true);
@@ -680,7 +689,8 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             </Button>
           )}
           {titleDirty && !savingTitle && (
-            <Button size="sm" variant="ghost" onClick={() => {
+            <Button size="sm" variant="ghost" onPointerDown={(event) => event.preventDefault()} onClick={() => {
+              taskTitleDrafts.delete(draftKey);
               titleDraft.current = { value: task.title, revision: titleDraft.current.revision + 1, dirty: false };
               setTitle(task.title);
               setTitleDirty(false);
