@@ -405,7 +405,14 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
       <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded ${d.status === "done" ? "bg-secondary text-secondary-foreground" : "bg-amber-500/10 text-amber-600"}`}>
         {d.status}
       </span>
-      <Button size="sm" variant="ghost" onClick={() => removeDep(d.id)}><X /></Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={`Удалить связь с задачей #${d.id}: ${d.title}`}
+        onClick={() => removeDep(d.id)}
+      >
+        <X />
+      </Button>
     </div>
   );
 
@@ -425,7 +432,9 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
       >
         <div className="flex items-center justify-between border-b p-4">
           <span className="text-sm text-muted-foreground">Задача #{task.id}</span>
-          <Button size="sm" variant="ghost" onClick={onClose}><X /></Button>
+          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+            <X />
+          </Button>
         </div>
         <div className="space-y-4 p-4">
           <Input
