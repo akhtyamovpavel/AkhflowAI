@@ -12,14 +12,33 @@ func init() {
 	for i := range Registry {
 		tool := &Registry[i]
 		original := tool.Handler
-		readOnly := tool.Name == "list_tasks" || tool.Name == "get_task" || tool.Name == "list_epics"
-		projectScoped := tool.Name == "list_tasks" || tool.Name == "create_task" || tool.Name == "list_epics" || tool.Name == "create_epic" || tool.Name == "import_trello" || tool.Name == "import_akhcheck_course" || tool.Name == "import_bitrix24_tasks"
+		name := tool.Name
 		tool.Handler = func(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
+			projectScoped, readOnly, known := toolAccessPolicy(name)
+			if !known {
+				return Result{}, errors.New("tool access policy missing")
+			}
 			if err := authorizeToolProject(ctx, deps, args, projectScoped, !readOnly); err != nil {
 				return Result{}, err
 			}
 			return original(ctx, deps, args)
 		}
+	}
+}
+
+// New tools must explicitly declare their resource and whether they change it.
+func toolAccessPolicy(name string) (projectScoped, readOnly, known bool) {
+	switch name {
+	case "list_tasks", "list_epics":
+		return true, true, true
+	case "get_task":
+		return false, true, true
+	case "create_task", "create_epic", "import_trello", "import_akhcheck_course", "import_bitrix24_tasks":
+		return true, false, true
+	case "move_task", "add_comment", "set_assignee", "set_task_epic", "add_dependency", "remove_dependency", "set_task_recurring", "delete_task":
+		return false, false, true
+	default:
+		return false, false, false
 	}
 }
 
