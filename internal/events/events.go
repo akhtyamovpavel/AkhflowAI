@@ -6,7 +6,7 @@ import (
 )
 
 type Event struct {
-	Type      string    `json:"type"` // task_created, task_moved, task_updated, task_comment, dependency_added, dependency_removed
+	Type      string    `json:"type"` // task_created, task_moved, task_updated, tasks_imported, task_comment, dependency_added, dependency_removed
 	ProjectID int64     `json:"project_id"`
 	TaskID    int64     `json:"task_id,omitempty"`
 	Title     string    `json:"title,omitempty"`

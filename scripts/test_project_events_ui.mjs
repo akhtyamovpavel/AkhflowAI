@@ -5,7 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 const moduleName = process.env.PLAYWRIGHT_MODULE;
-const playwright = await import(moduleName ? pathToFileURL(moduleName).href : "playwright");
+const defaultModule = new URL("../web/node_modules/playwright-core/index.mjs", import.meta.url).href;
+const playwright = await import(moduleName ? pathToFileURL(moduleName).href : defaultModule);
 const probe = createServer();
 await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
 const port = probe.address().port;
@@ -18,6 +19,7 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
 let browser;
 let version = 1;
 let taskRequests = 0;
+let epicRequests = 0;
 
 try {
   let ready = false;
@@ -92,6 +94,11 @@ try {
       await route.fulfill({ json: [task] });
       return;
     }
+    if (path.endsWith("/epics")) {
+      epicRequests++;
+      await route.fulfill({ json: [] });
+      return;
+    }
     if (path.endsWith("/role")) {
       await route.fulfill({ json: { role: "viewer" } });
       return;
@@ -119,6 +126,14 @@ try {
   await page.getByRole("status").getByText("Изменена задача: Обновлена").waitFor();
   await page.evaluate(() => window.sendSplitBytes(0, 'data: {"type":"task_created","project_id":1,"title":"Привет"}\n\n'));
   await page.getByRole("status").getByText("Создана задача: Привет").waitFor();
+  const previousTasks = taskRequests;
+  const previousEpics = epicRequests;
+  const importedTasks = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects/alpha/tasks");
+  const importedEpics = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects/alpha/epics");
+  await page.evaluate(() => window.sendChunks(0, ['data: {"type":"tasks_imported","project_id":1}\n\n']));
+  await Promise.all([importedTasks, importedEpics]);
+  await page.getByRole("status").getByText("Данные проекта импортированы").waitFor();
+  assert.ok(taskRequests > previousTasks && epicRequests > previousEpics, "import must refresh tasks and epics");
   version = 3;
   await page.evaluate(() => window.streams[0].controller.close());
   await page.waitForFunction(() => window.streams.length === 2);

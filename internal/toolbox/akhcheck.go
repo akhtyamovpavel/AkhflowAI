@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"akhflow.ai/akhflow/internal/akhcheck"
+	"akhflow.ai/akhflow/internal/events"
 )
 
 func init() {
@@ -43,6 +44,9 @@ func importAkhcheckCourse(ctx context.Context, deps Deps, args json.RawMessage) 
 	result, err := deps.Store.ImportAkhcheck(ctx, project.ID, deps.ActorID, course)
 	if err != nil {
 		return Result{}, err
+	}
+	if result.Created > 0 {
+		publishEvent(deps, events.Event{Type: "tasks_imported", ProjectID: project.ID, Actor: deps.Actor})
 	}
 	return Result{Ok: true, Message: fmt.Sprintf("Импортировано: %d, пропущено: %d", result.Created, result.Skipped), Data: result}, nil
 }

@@ -217,6 +217,40 @@ func TestAPIEventsAcrossProcesses(t *testing.T) {
 		case <-time.After(400 * time.Millisecond):
 		}
 	}
+	checkImport := func(ch <-chan events.Event) {
+		t.Helper()
+		select {
+		case event, ok := <-ch:
+			if !ok || event.ProjectID != project || event.Type != "tasks_imported" {
+				t.Fatalf("import event: %+v", event)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("import event did not reach the API process")
+		}
+	}
+	importAPI := func() {
+		t.Helper()
+		req, err := http.NewRequest("POST", first+"/api/projects/shared-project/imports/akhcheck", strings.NewReader(`{"id":13,"tasks":[{"id":1,"name":"Imported API"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+ownerToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("import: %d", resp.StatusCode)
+		}
+	}
+	importAPI()
+	checkImport(firstEvents)
+	checkImport(secondEvents)
+	noExtras()
+	importAPI()
+	noExtras()
 	create(first, "from-first")
 	check(firstEvents, "from-first")
 	check(secondEvents, "from-first")
@@ -287,5 +321,23 @@ func TestAPIEventsAcrossProcesses(t *testing.T) {
 	}
 	check(firstEvents, "from-mcp")
 	check(secondEvents, "from-mcp")
+	noExtras()
+	importMCP := func() {
+		t.Helper()
+		payload := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"import_akhcheck_course","arguments":{"project":"shared-project","course":{"id":14,"tasks":[{"id":2,"name":"Imported MCP"}]}}}}`
+		cmd := exec.Command(binary, "serve", "mcp")
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), "DATABASE_URL="+scoped, fmt.Sprintf("MCP_USER_ID=%d", owner), "MCP_USER_EMAIL=api-owner@example.invalid")
+		cmd.Stdin = strings.NewReader(payload + "\n")
+		out, err := cmd.CombinedOutput()
+		if err != nil || strings.Contains(string(out), `"isError":true`) {
+			t.Fatalf("MCP import: %v %s", err, out)
+		}
+	}
+	importMCP()
+	checkImport(firstEvents)
+	checkImport(secondEvents)
+	noExtras()
+	importMCP()
 	noExtras()
 }

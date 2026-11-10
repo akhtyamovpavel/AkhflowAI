@@ -10,6 +10,7 @@ import (
 
 	"akhflow.ai/akhflow/internal/bitrix24"
 	"akhflow.ai/akhflow/internal/domain"
+	"akhflow.ai/akhflow/internal/events"
 )
 
 func init() {
@@ -55,6 +56,11 @@ func importBitrixTasks(ctx context.Context, d Deps, args json.RawMessage) (Resul
 	}
 	created := 0
 	skipped := 0
+	defer func() {
+		if created > 0 {
+			publishEvent(d, events.Event{Type: "tasks_imported", ProjectID: p.ID, Actor: d.Actor})
+		}
+	}()
 	for _, source := range tasks {
 		task := domain.Task{ProjectID: p.ID, AuthorID: d.ActorID, Title: source.Title, Description: source.Description, Status: source.Status, Priority: source.Priority, DueDate: source.DueDate}
 		inserted, err := d.Store.ImportBitrixTask(ctx, portal, source.ID, task)
