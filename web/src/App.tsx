@@ -1097,6 +1097,7 @@ export default function App() {
 
       {openTaskId && (
         <TaskDetail
+          key={openTaskId}
           taskId={openTaskId}
           epics={epics}
           members={members}
