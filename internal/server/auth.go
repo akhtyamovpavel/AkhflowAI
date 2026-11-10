@@ -19,8 +19,8 @@ import (
 )
 
 type Auth struct {
-	Store   *store.Store
-	Secret  []byte
+	Store    *store.Store
+	Secret   []byte
 	TokenTTL time.Duration
 }
 
@@ -61,6 +61,11 @@ func (a *Auth) CreateToken(userID int64) (string, error) {
 }
 
 func (a *Auth) ParseToken(tokenStr string) (int64, error) {
+	id, _, err := a.parseToken(tokenStr)
+	return id, err
+}
+
+func (a *Auth) parseToken(tokenStr string) (int64, time.Time, error) {
 	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
@@ -68,26 +73,31 @@ func (a *Auth) ParseToken(tokenStr string) (int64, error) {
 		return a.Secret, nil
 	}, jwt.WithExpirationRequired())
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok || !tok.Valid {
-		return 0, errors.New("invalid token")
+		return 0, time.Time{}, errors.New("invalid token")
 	}
 	sub, ok := claims["sub"].(string)
 	if !ok {
-		return 0, errors.New("missing subject")
+		return 0, time.Time{}, errors.New("missing subject")
 	}
 	var id int64
 	if _, err := fmt.Sscanf(sub, "%d", &id); err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
-	return id, nil
+	exp, err := claims.GetExpirationTime()
+	if err != nil || exp == nil {
+		return 0, time.Time{}, errors.New("missing expiration")
+	}
+	return id, exp.Time, nil
 }
 
 type contextKey string
 
 const userCtxKey contextKey = "user"
+const tokenExpiryCtxKey contextKey = "token_expiry"
 
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +106,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"missing token"}`, http.StatusUnauthorized)
 			return
 		}
-		id, err := a.ParseToken(strings.TrimPrefix(h, "Bearer "))
+		id, expiry, err := a.parseToken(strings.TrimPrefix(h, "Bearer "))
 		if err != nil {
 			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
@@ -107,6 +117,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userCtxKey, id)
+		ctx = context.WithValue(ctx, tokenExpiryCtxKey, expiry)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
