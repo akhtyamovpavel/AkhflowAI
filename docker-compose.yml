@@ -27,6 +27,9 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TRELLO_API_KEY: ${TRELLO_API_KEY:-}
+      TRELLO_API_TOKEN: ${TRELLO_API_TOKEN:-}
+      TRELLO_IMPORT_USER_ID: ${TRELLO_IMPORT_USER_ID:-}
     ports:
       - "8080:8080"
     depends_on:
