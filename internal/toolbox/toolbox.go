@@ -295,11 +295,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			status := str(v, "status")
 			if !validStatus(status) {
 				return Result{}, fmt.Errorf("unknown status %q", status)
@@ -363,11 +362,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			t, err := taskForMember(ctx, d, id)
 			if err != nil {
 				return Result{}, err
@@ -399,11 +397,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			body := str(v, "body")
 			if body == "" {
 				return Result{}, errors.New("body is required")
@@ -435,11 +432,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			task, err := taskForMember(ctx, d, id)
 			if err != nil {
 				return Result{}, err
@@ -550,11 +546,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			t, err := d.Store.TaskByID(ctx, id)
 			if err != nil {
 				return Result{}, err
@@ -606,11 +601,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			df, ok := v["depends_on"].(float64)
 			if !ok {
 				return Result{}, errors.New("depends_on is required")
@@ -677,11 +671,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			df, ok := v["depends_on"].(float64)
 			if !ok {
 				return Result{}, errors.New("depends_on is required")
@@ -728,11 +721,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			t, err := d.Store.TaskByID(ctx, id)
 			if err != nil {
 				return Result{}, err
@@ -773,11 +765,10 @@ var Registry = []Tool{
 			if err := json.Unmarshal(args, &v); err != nil {
 				return Result{}, err
 			}
-			idf, ok := v["task_id"].(float64)
-			if !ok {
-				return Result{}, errors.New("task_id is required")
+			id, err := authorizedTaskID(ctx)
+			if err != nil {
+				return Result{}, err
 			}
-			id := int64(idf)
 			t, err := d.Store.TaskByID(ctx, id)
 			if err != nil {
 				return Result{}, err

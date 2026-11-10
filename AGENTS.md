@@ -53,7 +53,7 @@ printf '%s\n%s\n' \
 ## Architecture
 
 - Single Go module `akhflow.ai/akhflow` at root; one binary `cmd/akhflow` (cobra): `serve api|mcp`, `migrate`, `task`, `agent`
-- `internal/toolbox` — single registry of tools (list/create/move/get/delete task, add_comment, set_assignee, list/create epic, set_task_epic, add/remove_dependency, set_task_recurring). ONE source of truth: MCP server and the LLM agent execute the same handlers. Add a feature here, not in server/mcp separately
+- `internal/toolbox` — single registry of tools (list/create/move/get/delete task, add_comment, set_assignee, list/create epic, set_task_epic, add/remove_dependency, set_task_recurring). ONE source of truth: MCP server and the LLM agent execute the same handlers. Tool arguments are normalized against the schema, duplicate case-insensitive keys are rejected, and task handlers use the exact ID authorized by the shared wrapper. Add a feature here, not in server/mcp separately.
 - `internal/llm` — agent loop (max 8 iterations) over OpenAI-compatible `/v1/chat/completions`; system prompt forbids raw JSON dumps and requires a concise Russian summary of actions; agent is stateful WITHIN a chat: `sendMessage` loads last 20 turns from `agent_messages` into the LLM context (`/api/agent/chat` stays stateless); `internal/mcp` — hand-rolled JSON-RPC 2.0 (protocol 2025-06-18), stdio + HTTP
 - `internal/server` — REST: argon2id + JWT (HS256), per-user project isolation via `project_members`
 - `internal/store` — pgx/v5 + pgxpool, migrations embedded via `go:embed` in `internal/store/migrations/`
