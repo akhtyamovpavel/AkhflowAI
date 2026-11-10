@@ -67,6 +67,13 @@ func TestNaturalLanguageTaskCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	viewer, err := db.CreateUser(ctx, "viewer@example.invalid", "Viewer", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated, err := db.SetProjectMemberRole(ctx, project, owner, viewer, "viewer"); err != nil || !updated {
+		t.Fatalf("add viewer: updated=%v err=%v", updated, err)
+	}
 	foreign, err := db.CreateProject(ctx, "foreign", "Foreign", other)
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +191,17 @@ func TestNaturalLanguageTaskCreation(t *testing.T) {
 		if toolResult.OK != tc.ok || (!tc.ok && !strings.Contains(toolResult.Message, "access denied")) {
 			t.Fatalf("unexpected tool result: %+v", toolResult)
 		}
+	}
+	viewerToken, err := auth.CreateToken(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerRequest := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"message":"Создай задачу"}`))
+	viewerRequest.Header.Set("Authorization", "Bearer "+viewerToken)
+	viewerResponse := httptest.NewRecorder()
+	api.ServeHTTP(viewerResponse, viewerRequest)
+	if viewerResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer creating a task via chat: got %d", viewerResponse.Code)
 	}
 	local, err := db.ListTasks(ctx, project, "")
 	if err != nil {
