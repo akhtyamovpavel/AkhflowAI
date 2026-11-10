@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -586,9 +586,75 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
 
 export default function App() {
   const [token, saveToken] = useToken();
+  if (!token) return <Login onLogin={saveToken} />;
+  return <AccountWorkspace key={token} token={token} saveToken={saveToken} />;
+}
+
+function AccountWorkspace({ token, saveToken }: {
+  token: string;
+  saveToken: (token: string | null) => void;
+}) {
   const [view, setView] = useState<"kanban" | "list" | "dashboard" | "agent">("kanban");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
+
+  const loadProjects = useCallback(async () => {
+    if (!token) return;
+    const data: Project[] = (await api("/api/projects", {}, token)) ?? [];
+    setProjects(data);
+    const saved = localStorage.getItem("akhflow.project");
+    if (data.length > 0) {
+      setProject((p) => {
+        if (p && data.some((x) => x.slug === p)) return p;
+        if (saved && data.some((x) => x.slug === saved)) return saved;
+        return data[0].slug;
+      });
+    } else {
+      setProject("");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
+
+  return (
+    <ProjectWorkspace
+      key={`${token}:${project}`}
+      token={token}
+      saveToken={saveToken}
+      project={project}
+      projects={projects}
+      setProject={setProject}
+      loadProjects={loadProjects}
+      view={view}
+      setView={setView}
+    />
+  );
+}
+
+type WorkspaceView = "kanban" | "list" | "dashboard" | "agent";
+
+function ProjectWorkspace({
+  token, saveToken, project, projects, setProject, loadProjects, view, setView,
+}: {
+  token: string;
+  saveToken: (token: string | null) => void;
+  project: string;
+  projects: Project[];
+  setProject: (project: string) => void;
+  loadProjects: () => Promise<void>;
+  view: WorkspaceView;
+  setView: (view: WorkspaceView) => void;
+}) {
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksProject, setTasksProject] = useState("");
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -614,20 +680,6 @@ export default function App() {
   const [bitrixGroup, setBitrixGroup] = useState("");
   const [bitrixBusy, setBitrixBusy] = useState(false);
   const [bitrixMessage, setBitrixMessage] = useState("");
-
-  const loadProjects = useCallback(async () => {
-    if (!token) return;
-    const data: Project[] = (await api("/api/projects", {}, token)) ?? [];
-    setProjects(data);
-    const saved = localStorage.getItem("akhflow.project");
-    if (data.length > 0) {
-      setProject((p) => {
-        if (p && data.some((x) => x.slug === p)) return p;
-        if (saved && data.some((x) => x.slug === saved)) return saved;
-        return data[0].slug;
-      });
-    }
-  }, [token]);
 
   const loadTasks = useCallback(async () => {
     if (!token || !project) return;
@@ -676,10 +728,6 @@ export default function App() {
     else setMessages([]);
   }, [activeChat, loadMessages]);
 
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
-
   const loadEpics = useCallback(async () => {
     if (!token || !project) return;
     const data: Epic[] = (await api(`/api/projects/${project}/epics`, {}, token)) ?? [];
@@ -709,8 +757,6 @@ export default function App() {
     loadTasks();
   }, [loadTasks, project]);
 
-  if (!token) return <Login onLogin={saveToken} />;
-
   const move = async (id: number, dir: number) => {
     const t = tasks.find((x) => x.id === id);
     if (!t) return;
@@ -730,6 +776,7 @@ export default function App() {
     setShowNewProject(false);
     setNewProjectName("");
     await loadProjects();
+    if (!mounted.current) return;
     setProject(data.slug);
     localStorage.setItem("akhflow.project", data.slug);
   };
