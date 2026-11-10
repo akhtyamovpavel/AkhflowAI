@@ -10,6 +10,7 @@ import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
+import { TaskAttachments } from "@/components/TaskAttachments";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -629,6 +630,7 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
               </div>
             )}
           </div>
+          <TaskAttachments taskId={taskId} token={token} apiBase={API} />
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>

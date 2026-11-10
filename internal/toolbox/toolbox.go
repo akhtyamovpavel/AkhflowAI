@@ -161,6 +161,18 @@ func SpawnNextOccurrence(ctx context.Context, d Deps, orig *domain.Task, inherit
 
 var Registry = []Tool{
 	{
+		Name:        "list_attachments",
+		Description: "List uploaded attachments on a task accessible to the current user",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id": map[string]any{"type": "integer"},
+			},
+			"required": []string{"task_id"},
+		},
+		Handler: listAttachments,
+	},
+	{
 		Name:        "list_tasks",
 		Description: "List tasks in a project space, optionally filtered by status (backlog, todo, in_progress, done). Use brief=true to save tokens: returns only id, title, status, priority",
 		Schema: map[string]any{
