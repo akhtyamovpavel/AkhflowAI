@@ -6,17 +6,12 @@ import (
 	"errors"
 )
 
-func listAttachments(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
-	var request struct {
-		TaskID int64 `json:"task_id"`
-	}
-	if err := json.Unmarshal(args, &request); err != nil {
+func listAttachments(ctx context.Context, deps Deps, _ json.RawMessage) (Result, error) {
+	taskID, err := authorizedTaskID(ctx)
+	if err != nil {
 		return Result{}, err
 	}
-	if request.TaskID <= 0 {
-		return Result{}, errors.New("task_id is required")
-	}
-	task, err := deps.Store.TaskByID(ctx, request.TaskID)
+	task, err := deps.Store.TaskByID(ctx, taskID)
 	if err != nil {
 		return Result{}, err
 	}
