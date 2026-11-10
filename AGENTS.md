@@ -39,9 +39,11 @@ printf '%s\n%s\n' \
 - The hook requires Python 3 and Gitleaks on PATH or at `bin/security-tools/gitleaks`. It scans the complete index, blocks local secret values, sensitive filenames and personal absolute paths, and redacts scanner output. Missing Gitleaks blocks the commit.
 - Check publishable worktree files with `python3 scripts/check_publish.py`; check the index with `python3 scripts/check_publish.py --staged`. Run hook regression checks with `python3 scripts/test_publish_hook.py`.
 - Generate separate random values for `JWT_SECRET` and `MCP_API_KEY` in the ignored `.env`; Compose requires `JWT_SECRET`. Optional UI text linting in `scripts/smoke_deadlines.mjs` uses `TEXT_LINT_SCRIPT` and `PYTHON_BIN`.
+- Trello import uses `TRELLO_API_KEY`, `TRELLO_API_TOKEN`, and `TRELLO_IMPORT_USER_ID` from server environment. Set the user ID to the account authorized to use those credentials; other users cannot import with them. Open Trello lists become epics, open cards become backlog tasks, and re-import skips existing cards without overwriting local edits. Credentials are never sent through the agent or stored in task history.
 
 ## Git workflow
 
+- Each issue gets its own Git worktree and branch. Select tracker issues from the primary worktree, then implement and verify each issue in its dedicated worktree under `.worktrees/`.
 - Agents may create commits and push automatically on branches other than `main` after the relevant checks and the pre-commit hook pass.
 - Commits and pushes to `main` require an explicit user instruction. Permission for one operation on `main` does not authorize later automatic commits or pushes to that branch.
 - Before publishing, check the staged files and outgoing history for secrets and personal absolute paths. Keep local credentials, logs, build outputs and test artifacts out of Git.
