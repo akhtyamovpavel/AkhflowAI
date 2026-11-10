@@ -109,6 +109,30 @@ func TestProjectRolesEnforceAccess(t *testing.T) {
 		handler.ServeHTTP(response, req)
 		return response.Code
 	}
+	for _, actor := range []struct {
+		id       int64
+		name     string
+		writable bool
+	}{{viewer, "viewer", false}, {editor, "editor", true}, {legacy, "member", true}} {
+		path := fmt.Sprintf("/api/tasks/%d", taskID)
+		wantOutsider, wantMember := 403, 403
+		if actor.writable {
+			wantOutsider, wantMember = 400, 200
+		}
+		if status := request(actor.id, "PATCH", path, fmt.Sprintf(`{"assignee_id":%d}`, outsider)); status != wantOutsider {
+			t.Errorf("%s assigning outsider: got %d want %d", actor.name, status, wantOutsider)
+		}
+		if status := request(actor.id, "PATCH", path, fmt.Sprintf(`{"assignee_id":%d}`, viewer)); status != wantMember {
+			t.Errorf("%s assigning member: got %d want %d", actor.name, status, wantMember)
+		}
+		for _, target := range []string{"outsider@example.invalid", "viewer@example.invalid"} {
+			args, _ := json.Marshal(map[string]any{"task_id": taskID, "email": target})
+			_, err := toolbox.ByName("set_assignee").Handler(ctx, toolbox.Deps{Store: db, ActorID: actor.id}, args)
+			if (err == nil) != (actor.writable && target == "viewer@example.invalid") {
+				t.Errorf("%s tool assigning %s: %v", actor.name, target, err)
+			}
+		}
+	}
 	checks := []struct {
 		actor              int64
 		method, path, body string
