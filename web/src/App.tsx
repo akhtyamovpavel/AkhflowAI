@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
-import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X } from "lucide-react";
+import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
   id: number;
@@ -174,6 +175,46 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
     throw new Error(`${res.status}: ${body}`);
   }
   return res.json();
+}
+
+function AkhcheckImport({ project, token, onImported }: { project: string; token: string | null; onImported: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || !project || !token) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error("Файл больше 4 МБ");
+      const course = JSON.parse(await file.text());
+      const result = await api(`/api/projects/${encodeURIComponent(project)}/imports/akhcheck`, {
+        method: "POST",
+        body: JSON.stringify(course),
+      }, token);
+      await onImported();
+      setMessage(`Добавлено: ${result.created}, уже было: ${result.skipped}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось импортировать файл");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>Импорт Akhcheck</Button>;
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={submit}>
+      <label className="text-sm" htmlFor="akhcheck-course-file">JSON курса Akhcheck</label>
+      <input id="akhcheck-course-file" type="file" accept="application/json,.json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+      <span className="text-xs text-muted-foreground">Сохрани JSON со страницы /api/teaching/course/ID в Akhcheck.</span>
+      <Button size="sm" type="submit" disabled={!file || busy}>Импортировать</Button>
+      <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(false)}>Закрыть</Button>
+      {message && <span className="text-sm" role="status">{message}</span>}
+    </form>
+  );
 }
 
 function Login({ onLogin }: { onLogin: (t: string) => void }) {
@@ -535,7 +576,7 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
 
 export default function App() {
   const [token, saveToken] = useToken();
-  const [view, setView] = useState<"kanban" | "list" | "agent">("kanban");
+  const [view, setView] = useState<"kanban" | "list" | "dashboard" | "agent">("kanban");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -584,6 +625,14 @@ export default function App() {
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
     return (await api(`/api/projects/${project}/tasks`, { signal }, token)) ?? [];
+  }, [token, project]);
+
+  const loadDashboard = useCallback(async (signal: AbortSignal) => {
+    const [projectTasks, projectMembers] = await Promise.all([
+      api(`/api/projects/${project}/tasks`, { signal }, token),
+      api(`/api/projects/${project}/members`, { signal }, token),
+    ]);
+    return { tasks: projectTasks ?? [], members: projectMembers ?? [] };
   }, [token, project]);
 
   const loadChats = useCallback(async () => {
@@ -805,6 +854,7 @@ export default function App() {
               <Plus /> Проект
             </Button>
           )}
+          {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} />}
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={epicFilter}
@@ -849,6 +899,9 @@ export default function App() {
             </Button>
             <Button variant={view === "list" ? "default" : "ghost"} size="sm" onClick={() => setView("list")}>
               <ListTodo /> Список
+            </Button>
+            <Button variant={view === "dashboard" ? "default" : "ghost"} size="sm" onClick={() => setView("dashboard")}>
+              <ChartNoAxesCombined /> Сводка
             </Button>
             <Button variant={view === "agent" ? "default" : "ghost"} size="sm" onClick={() => setView("agent")}>
               <MessageSquare /> Агент
@@ -897,6 +950,12 @@ export default function App() {
         </div>
 
         {view === "kanban" && <Kanban tasks={visibleTasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
+
+        {view === "dashboard" && (
+          project
+            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} />
+            : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
+        )}
 
         {view === "list" && (
           <Card>
