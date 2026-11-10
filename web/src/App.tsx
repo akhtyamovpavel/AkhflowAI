@@ -13,6 +13,7 @@ import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
+import { TaskAttachments } from "@/components/TaskAttachments";
 import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
 import { readSharedTask, telegramShareURL } from "@/lib/taskShare";
 import type { SharedTask } from "@/lib/taskShare";
@@ -650,6 +651,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
               </div>
             )}
           </div>
+          <TaskAttachments taskId={taskId} token={token} apiBase={API} />
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>
