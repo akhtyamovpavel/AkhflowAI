@@ -31,3 +31,16 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check container startup and proxy
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          trap 'docker compose down --volumes' EXIT
+          docker compose up -d --build
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://localhost:8080/api/health
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://localhost:5173/api/health
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://localhost:5173/
