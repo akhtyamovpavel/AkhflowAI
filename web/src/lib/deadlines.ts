@@ -35,6 +35,21 @@ export function deadlineMessage(task: DeadlineTask, now = new Date()): string {
   return "Срок завтра";
 }
 
-export function reminderKey(project: string, task: DeadlineTask): string {
-  return `akhflow.deadline.${project}.${task.id}.${deadlineDate(task)}`;
+// The subject is used only for local deduplication; API access is authorized by the server.
+export function reminderUserId(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const claims: unknown = JSON.parse(atob(base64));
+    if (!claims || typeof claims !== "object" || !("sub" in claims)) return null;
+    const subject = claims.sub;
+    return typeof subject === "string" && /^[1-9][0-9]*$/.test(subject) ? subject : null;
+  } catch {
+    return null;
+  }
+}
+
+export function reminderKey(userId: string, project: string, task: DeadlineTask): string {
+  return `akhflow.deadline.v2.${userId}.${encodeURIComponent(project)}.${task.id}.${deadlineDate(task)}`;
 }
