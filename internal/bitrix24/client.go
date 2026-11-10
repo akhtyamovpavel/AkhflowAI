@@ -59,13 +59,19 @@ func (c Client) Fetch(ctx context.Context, groupID int64) (string, []Task, error
 	// Do not follow redirects: the webhook URL embeds a credential.
 	clientCopy := *client
 	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	const pageSize = 50
+	const maxPages = 200
 	tasks := []Task{}
-	start := 0
-	for page := 0; page < 200; page++ {
-		params := map[string]any{"start": start, "order": map[string]string{"ID": "asc"}, "select": []string{"ID", "TITLE", "DESCRIPTION", "STATUS", "PRIORITY", "DEADLINE"}}
+	var cursor int64
+	// Bitrix24's cursor traversal avoids skipping tasks when earlier records
+	// disappear between requests. The extra request confirms an exact limit.
+	// https://apidocs.bitrix24.com/settings/performance/huge-data.html
+	for page := 0; page <= maxPages; page++ {
+		filter := map[string]int64{">ID": cursor}
 		if groupID > 0 {
-			params["filter"] = map[string]int64{"GROUP_ID": groupID}
+			filter["GROUP_ID"] = groupID
 		}
+		params := map[string]any{"start": -1, "order": map[string]string{"ID": "asc"}, "filter": filter, "select": []string{"ID", "TITLE", "DESCRIPTION", "STATUS", "PRIORITY", "DEADLINE"}}
 		body, err := json.Marshal(params)
 		if err != nil {
 			return "", nil, err
@@ -90,19 +96,26 @@ func (c Client) Fetch(ctx context.Context, groupID int64) (string, []Task, error
 					Deadline    string          `json:"deadline"`
 				} `json:"tasks"`
 			} `json:"result"`
-			Next  json.RawMessage `json:"next"`
-			Error string          `json:"error"`
+			Error string `json:"error"`
 		}
 		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 5<<20)).Decode(&result)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || decodeErr != nil || result.Error != "" || result.Result.Tasks == nil {
 			return "", nil, fmt.Errorf("Bitrix24 returned an invalid response (HTTP %d)", resp.StatusCode)
 		}
+		if len(result.Result.Tasks) > pageSize {
+			return "", nil, errors.New("Bitrix24 returned too many tasks on a page")
+		}
+		if page == maxPages && len(result.Result.Tasks) > 0 {
+			return "", nil, errors.New("Bitrix24 page limit exceeded")
+		}
 		for _, item := range result.Result.Tasks {
 			id := value(item.ID)
-			if id == "" || strings.TrimSpace(item.Title) == "" {
-				return "", nil, errors.New("Bitrix24 task lacks ID or title")
+			numericID, err := strconv.ParseInt(id, 10, 64)
+			if err != nil || numericID <= cursor || strings.TrimSpace(item.Title) == "" {
+				return "", nil, errors.New("Bitrix24 returned an invalid task ID, order or title")
 			}
+			cursor = numericID
 			task := Task{ID: id, Title: item.Title, Description: item.Description, Status: domain.StatusTodo, Priority: domain.PriorityMedium}
 			switch value(item.Status) {
 			case "3":
@@ -124,15 +137,9 @@ func (c Client) Fetch(ctx context.Context, groupID int64) (string, []Task, error
 			}
 			tasks = append(tasks, task)
 		}
-		next := value(result.Next)
-		if next == "" {
+		if len(result.Result.Tasks) < pageSize {
 			return portal, tasks, nil
 		}
-		n, err := strconv.Atoi(next)
-		if err != nil || n <= start {
-			return "", nil, errors.New("invalid Bitrix24 pagination")
-		}
-		start = n
 	}
 	return "", nil, errors.New("Bitrix24 page limit exceeded")
 }
