@@ -734,7 +734,10 @@ function ProjectWorkspace({
   const [tasksProject, setTasksProject] = useState("");
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
+  const [busyChats, setBusyChats] = useState<Set<number>>(() => new Set());
+  const pendingChats = useRef(new Set<number>());
+  const messageRequests = useRef(new Map<number, number>());
   const [input, setInput] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
@@ -750,7 +753,6 @@ function ProjectWorkspace({
   const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
   const [showBitrixImport, setShowBitrixImport] = useState(false);
   const [bitrixGroup, setBitrixGroup] = useState("");
   const [bitrixBusy, setBitrixBusy] = useState(false);
@@ -802,8 +804,15 @@ function ProjectWorkspace({
 
   const loadMessages = useCallback(
     async (chatId: number) => {
+      if (pendingChats.current.has(chatId)) {
+        return;
+      }
+      const request = (messageRequests.current.get(chatId) ?? 0) + 1;
+      messageRequests.current.set(chatId, request);
       const data: ChatMessage[] = (await api(`/api/chats/${chatId}/messages`, {}, token)) ?? [];
-      setMessages(data);
+      if (messageRequests.current.get(chatId) === request) {
+        setMessagesByChat((current) => ({ ...current, [chatId]: data }));
+      }
     },
     [token],
   );
@@ -814,7 +823,6 @@ function ProjectWorkspace({
 
   useEffect(() => {
     if (activeChat) loadMessages(activeChat);
-    else setMessages([]);
   }, [activeChat, loadMessages]);
 
   const loadEpics = useCallback(async () => {
@@ -948,28 +956,50 @@ function ProjectWorkspace({
   };
 
   const askAgent = async () => {
-    if (!input.trim() || busy || !activeChat) return;
+    if (!input.trim() || !activeChat || pendingChats.current.has(activeChat)) return;
+    const chatId = activeChat;
     const text = input.trim();
     setInput("");
-    setBusy(true);
+    pendingChats.current.add(chatId);
+    setBusyChats((current) => new Set(current).add(chatId));
+    messageRequests.current.set(chatId, (messageRequests.current.get(chatId) ?? 0) + 1);
     const tempId = Date.now();
-    setMessages((m) => [...m, { id: tempId, role: "user", content: text }]);
+    setMessagesByChat((current) => ({
+      ...current,
+      [chatId]: [...(current[chatId] ?? []), { id: tempId, role: "user", content: text }],
+    }));
+    let sent = false;
     try {
-      const data = await api(`/api/chats/${activeChat}/messages`, {
+      const data = await api(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
       }, token);
-      setMessages((m) => [
-        ...m,
-        { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls },
-      ]);
+      setMessagesByChat((current) => ({
+        ...current,
+        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls }],
+      }));
+      sent = true;
     } catch (e: any) {
-      setMessages((m) => [...m, { id: tempId + 1, role: "agent", content: `Ошибка: ${e.message}` }]);
+      setMessagesByChat((current) => ({
+        ...current,
+        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: `Ошибка: ${e.message}` }],
+      }));
     }
-    setBusy(false);
+    pendingChats.current.delete(chatId);
+    setBusyChats((current) => {
+      const next = new Set(current);
+      next.delete(chatId);
+      return next;
+    });
+    if (sent) {
+      void loadMessages(chatId).catch(() => {});
+    }
     loadTasks();
     loadChats();
   };
+
+  const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];
+  const busy = activeChat ? busyChats.has(activeChat) : false;
 
   return (
     <div className="min-h-screen bg-background">
