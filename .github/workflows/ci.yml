@@ -30,6 +30,7 @@ jobs:
       - run: go test ./...
         env:
           AKHFLOW_ISOLATION_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
+          AKHFLOW_ROLES_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_ASSIGNEE_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
 
   web:
