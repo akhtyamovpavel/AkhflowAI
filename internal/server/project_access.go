@@ -7,6 +7,23 @@ import (
 	"akhflow.ai/akhflow/internal/store"
 )
 
+// sseAccess accepts a query token only on the events endpoint. An explicit
+// Authorization header always takes precedence, even when it is invalid.
+func (s *Server) sseAccess(next http.HandlerFunc) http.Handler {
+	handler := s.projectAccess("project", false, next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded := r.Clone(r.Context())
+		query := forwarded.URL.Query()
+		token := query.Get("token")
+		query.Del("token")
+		forwarded.URL.RawQuery = query.Encode()
+		if forwarded.Header.Get("Authorization") == "" && token != "" {
+			forwarded.Header.Set("Authorization", "Bearer "+token)
+		}
+		handler.ServeHTTP(w, forwarded)
+	})
+}
+
 func (s *Server) projectAccess(resource string, write bool, next http.HandlerFunc) http.Handler {
 	return s.Auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, err := UserFrom(r.Context())

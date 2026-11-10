@@ -8,7 +8,7 @@ import ts from "../web/node_modules/typescript/lib/typescript.js";
 const source = await readFile(new URL("../web/src/lib/deadlines.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } });
 const moduleURL = `data:text/javascript;base64,${Buffer.from(compiled.outputText).toString("base64")}`;
-const { upcomingDeadlines, reminderKey } = await import(moduleURL);
+const { upcomingDeadlines, reminderKey, reminderUserId } = await import(moduleURL);
 const now = new Date(2026, 9, 6, 23, 59);
 const fixture = [
   { id: 1, title: "Today", status: "todo", due_date: "2026-10-06T00:00:00Z" },
@@ -25,8 +25,13 @@ const yearTask = { id: 8, title: "New year", status: "todo", due_date: "2027-01-
 assert.equal(upcomingDeadlines([yearTask], yearEnd).length, 1);
 const dstTask = { ...yearTask, due_date: "2026-03-09" };
 assert.equal(upcomingDeadlines([dstTask], new Date(2026, 2, 8, 23, 59)).length, 1);
-assert.notEqual(reminderKey("a", fixture[0]), reminderKey("b", fixture[0]));
-assert.notEqual(reminderKey("a", fixture[0]), reminderKey("a", { ...fixture[0], due_date: "2026-10-07" }));
+assert.notEqual(reminderKey("1", "a", fixture[0]), reminderKey("1", "b", fixture[0]));
+assert.notEqual(reminderKey("1", "a", fixture[0]), reminderKey("2", "a", fixture[0]));
+assert.notEqual(reminderKey("1", "a", fixture[0]), reminderKey("1", "a", { ...fixture[0], due_date: "2026-10-07" }));
+const token = (subject) => `header.${Buffer.from(JSON.stringify({ sub: subject })).toString("base64url")}.signature`;
+assert.equal(reminderUserId(token("123")), "123");
+assert.equal(reminderUserId(token("0")), null);
+assert.equal(reminderUserId("invalid"), null);
 console.log("PASS: calendar boundaries, completed/overdue/recurring exclusions, reminder keys");
 
 if (process.argv.includes("--unit")) {
@@ -35,12 +40,12 @@ if (process.argv.includes("--unit")) {
 
 const apiURL = process.env.AKHFLOW_API ?? "http://localhost:8080";
 const webURL = process.env.AKHFLOW_WEB ?? "http://localhost:5173";
-let token;
+let authToken;
 const taskIDs = [];
 async function request(path, method = "GET", body) {
   const response = await fetch(apiURL + path, {
     method,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   assert.ok(response.ok, `${method} ${path}: ${response.status}`);
@@ -89,7 +94,7 @@ async function evaluate(expression) {
 try {
   assert.equal((await request("/api/health")).status, "ok");
   const suffix = `${Date.now()}-${process.pid}`;
-  token = (await request("/api/auth/register", "POST", {
+  authToken = (await request("/api/auth/register", "POST", {
     email: `smoke-deadlines-${suffix}@example.com`, password: `Smoke-${suffix}!`, display_name: "Smoke deadlines",
   })).token;
   const slug = `smoke-deadlines-${suffix}`;
@@ -132,7 +137,7 @@ try {
   await cdp("Emulation.setTimezoneOverride", { timezoneId: "Europe/Moscow" });
   await cdp("Browser.grantPermissions", { origin: webURL, permissions: ["notifications"] });
   const setup = `
-    localStorage.setItem('akhflow.token', ${JSON.stringify(token)});
+    localStorage.setItem('akhflow.token', ${JSON.stringify(authToken)});
     localStorage.setItem('akhflow.project', ${JSON.stringify(slug)});
     window.delivered = [];
     const NativeNotification = window.Notification;
