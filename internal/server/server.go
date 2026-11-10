@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{slug}/tasks", s.Auth.Middleware(http.HandlerFunc(s.listTasks)))
 	mux.Handle("GET /api/projects/{slug}/members", s.Auth.Middleware(http.HandlerFunc(s.listMembers)))
 	mux.Handle("POST /api/projects/{slug}/tasks", s.Auth.Middleware(http.HandlerFunc(s.createTask)))
+	mux.Handle("POST /api/projects/{slug}/imports/bitrix24", s.Auth.Middleware(http.HandlerFunc(s.importBitrixTasks)))
 	mux.Handle("POST /api/projects/{slug}/imports/trello", s.Auth.Middleware(http.HandlerFunc(s.importTrello)))
 	mux.Handle("GET /api/projects/{slug}/chats", s.Auth.Middleware(http.HandlerFunc(s.listChats)))
 	mux.Handle("POST /api/projects/{slug}/chats", s.Auth.Middleware(http.HandlerFunc(s.createChat)))
