@@ -471,6 +471,8 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [blocks, setBlocks] = useState<Task[]>([]);
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [desc, setDesc] = useState("");
+  const description = useRef({ value: "", saved: "", version: 0 });
+  const [savingDescription, setSavingDescription] = useState(false);
   const [comment, setComment] = useState("");
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
@@ -479,13 +481,20 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const load = useCallback(async () => {
     if (!token) return;
+    const version = description.current.version;
     const data = await request(`/api/tasks/${taskId}`, {}, token);
     setTask(data.task);
     setComments(data.comments ?? []);
     setDeps(data.dependencies ?? []);
     setBlocks(data.blocks ?? []);
     setHistory(data.history ?? []);
-    setDesc(data.task.description ?? "");
+    const draft = description.current;
+    if (draft.version === version && draft.value === draft.saved) {
+      const value = data.task.description ?? "";
+      draft.value = value;
+      draft.saved = value;
+      setDesc(value);
+    }
   }, [taskId, token, request]);
 
   useEffect(() => {
@@ -498,6 +507,20 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
     await load();
     onChanged();
+  };
+
+  const saveDescription = async () => {
+    const value = description.current.value;
+    setSavingDescription(true);
+    try {
+      await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ description: value }) }, token);
+      description.current.saved = value;
+      description.current.version += 1;
+      await load();
+      onChanged();
+    } finally {
+      setSavingDescription(false);
+    }
   };
 
   const addComment = async () => {
@@ -659,10 +682,13 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             <textarea
               className="min-h-24 w-full rounded-md border bg-transparent p-2 text-sm"
               value={desc}
-              onChange={(e) => setDesc(e.target.value)}
+              onChange={(e) => {
+                description.current.value = e.target.value;
+                setDesc(e.target.value);
+              }}
               placeholder="Описание задачи..."
             />
-            <Button size="sm" variant="outline" onClick={() => patch({ description: desc })}>Сохранить</Button>
+            <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription}>Сохранить</Button>
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>
