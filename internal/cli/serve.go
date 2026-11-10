@@ -70,11 +70,16 @@ func runAPI() error {
 	}
 	auth := &server.Auth{Store: st, Secret: []byte(secret), TokenTTL: 24 * time.Hour}
 	llmClient := llm.NewClient(os.Getenv("OLLAMA_HOST"), os.Getenv("AGENT_MODEL"))
-	bus := events.NewBus()
+	publisher, err := events.NewPublisher(dsn)
+	if err != nil {
+		return err
+	}
+	defer publisher.Close()
+	bus := events.NewForwardingBus(publisher.Publish)
 	listenCtx, stopListener := context.WithCancel(context.Background())
 	defer stopListener()
-	if err := events.Listen(listenCtx, dsn, bus); err != nil {
-		log.Print("MCP event listener unavailable; retrying")
+	if err := events.Listen(listenCtx, dsn, bus, publisher.Origin()); err != nil {
+		log.Print("event listener unavailable; retrying")
 	}
 	srv := server.New(st, auth, llmClient, bus)
 	emailConfig, emailEnabled, err := email.FromEnv()

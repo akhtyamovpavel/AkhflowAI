@@ -27,6 +27,7 @@ var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // can drop notifications under pressure, as can the SSE subscriber queues.
 type Publisher struct {
 	mu     sync.Mutex
+	origin string
 	queue  chan Event
 	closed bool
 	cancel context.CancelFunc
@@ -34,12 +35,16 @@ type Publisher struct {
 }
 
 func NewPublisher(dsn string) (*Publisher, error) {
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &Publisher{queue: make(chan Event, eventQueueSize), cancel: cancel, done: make(chan struct{})}
+	p := &Publisher{origin: hex.EncodeToString(key), queue: make(chan Event, eventQueueSize), cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(p.done)
 		defer pool.Close()
@@ -48,8 +53,8 @@ func NewPublisher(dsn string) (*Publisher, error) {
 			if ctx.Err() != nil {
 				return
 			}
-			if err := sendEvent(ctx, pool, event); err != nil {
-				log.Print("MCP event delivery failed")
+			if err := sendEvent(ctx, pool, event, p.origin); err != nil {
+				log.Print("event delivery failed")
 			}
 			if time.Since(lastCleanup) >= time.Minute {
 				cleanupCtx, cancel := context.WithTimeout(ctx, time.Second)
@@ -61,6 +66,9 @@ func NewPublisher(dsn string) (*Publisher, error) {
 	}()
 	return p, nil
 }
+
+// Origin identifies this publisher when consuming relayed events.
+func (p *Publisher) Origin() string { return p.origin }
 
 func (p *Publisher) Publish(event Event) {
 	p.mu.Lock()
@@ -91,18 +99,24 @@ func (p *Publisher) Close() {
 	p.cancel()
 }
 
-func sendEvent(parent context.Context, pool *pgxpool.Pool, event Event) error {
+type relayedEvent struct {
+	Event
+	Origin string `json:"origin,omitempty"`
+}
+
+func sendEvent(parent context.Context, pool *pgxpool.Pool, event Event, origin string) error {
 	if event.ProjectID <= 0 || event.Type == "" {
 		return errors.New("invalid event")
 	}
-	payload, err := json.Marshal(event)
+	message := relayedEvent{Event: event, Origin: origin}
+	payload, err := json.Marshal(message)
 	if err != nil {
 		return err
 	}
 	if len(payload) > maxEventBytes {
-		event.Title = ""
-		event.Actor = ""
-		payload, err = json.Marshal(event)
+		message.Title = ""
+		message.Actor = ""
+		payload, err = json.Marshal(message)
 		if err != nil || len(payload) > maxEventBytes {
 			return errors.New("event too large")
 		}
@@ -122,7 +136,7 @@ func sendEvent(parent context.Context, pool *pgxpool.Pool, event Event) error {
 
 // Listen starts with an established LISTEN subscription, then reconnects after
 // database disconnects. Notifications during a disconnect are not replayed.
-func Listen(ctx context.Context, dsn string, bus *Bus) error {
+func Listen(ctx context.Context, dsn string, bus *Bus, origin string) error {
 	connectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	conn, err := connectListener(connectCtx, dsn)
 	if err == nil {
@@ -133,10 +147,10 @@ func Listen(ctx context.Context, dsn string, bus *Bus) error {
 		if conn != nil {
 			_ = conn.Close(context.Background())
 		}
-		go listenLoop(ctx, dsn, nil, bus)
+		go listenLoop(ctx, dsn, nil, bus, origin)
 		return err
 	}
-	go listenLoop(ctx, dsn, conn, bus)
+	go listenLoop(ctx, dsn, conn, bus, origin)
 	return nil
 }
 
@@ -149,7 +163,7 @@ func connectListener(ctx context.Context, dsn string) (*pgx.Conn, error) {
 	return pgx.ConnectConfig(ctx, config)
 }
 
-func listenLoop(ctx context.Context, dsn string, conn *pgx.Conn, bus *Bus) {
+func listenLoop(ctx context.Context, dsn string, conn *pgx.Conn, bus *Bus, origin string) {
 	seen := map[string]time.Time{}
 	lastCleanup := time.Time{}
 	defer func() {
@@ -214,8 +228,11 @@ func listenLoop(ctx context.Context, dsn string, conn *pgx.Conn, bus *Bus) {
 		if err != nil {
 			continue
 		}
-		var event Event
+		var event relayedEvent
 		if len(data) > 2*maxEventBytes || json.Unmarshal(data, &event) != nil || event.ProjectID <= 0 || event.Type == "" {
+			continue
+		}
+		if origin != "" && event.Origin == origin {
 			continue
 		}
 		if len(seen) >= 10000 {
@@ -225,6 +242,6 @@ func listenLoop(ctx context.Context, dsn string, conn *pgx.Conn, bus *Bus) {
 			}
 		}
 		seen[n.Payload] = time.Now()
-		bus.Publish(event)
+		bus.deliver(event.Event)
 	}
 }

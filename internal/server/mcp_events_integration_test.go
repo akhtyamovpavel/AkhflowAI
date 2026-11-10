@@ -88,7 +88,7 @@ func TestMCPEventsAcrossProcesses(t *testing.T) {
 	bus := events.NewBus()
 	listenCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	if err := events.Listen(listenCtx, scoped, bus); err != nil {
+	if err := events.Listen(listenCtx, scoped, bus, ""); err != nil {
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
