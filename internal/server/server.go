@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,30 +43,32 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/settings/email-notifications", s.Auth.Middleware(http.HandlerFunc(s.getEmailNotifications)))
 	mux.Handle("PUT /api/settings/email-notifications", s.Auth.Middleware(http.HandlerFunc(s.putEmailNotifications)))
 	mux.Handle("POST /api/projects", s.Auth.Middleware(http.HandlerFunc(s.createProject)))
-	mux.Handle("GET /api/projects/{slug}/tasks", s.Auth.Middleware(http.HandlerFunc(s.listTasks)))
-	mux.Handle("GET /api/projects/{slug}/members", s.Auth.Middleware(http.HandlerFunc(s.listMembers)))
-	mux.Handle("POST /api/projects/{slug}/tasks", s.Auth.Middleware(http.HandlerFunc(s.createTask)))
-	mux.Handle("POST /api/projects/{slug}/imports/akhcheck", s.Auth.Middleware(http.HandlerFunc(s.importAkhcheckCourse)))
-	mux.Handle("POST /api/projects/{slug}/imports/bitrix24", s.Auth.Middleware(http.HandlerFunc(s.importBitrixTasks)))
-	mux.Handle("POST /api/projects/{slug}/imports/trello", s.Auth.Middleware(http.HandlerFunc(s.importTrello)))
-	mux.Handle("GET /api/projects/{slug}/chats", s.Auth.Middleware(http.HandlerFunc(s.listChats)))
-	mux.Handle("GET /api/projects/{slug}/agent/usage", s.Auth.Middleware(http.HandlerFunc(s.getAgentUsage)))
-	mux.Handle("POST /api/projects/{slug}/chats", s.Auth.Middleware(http.HandlerFunc(s.createChat)))
-	mux.Handle("GET /api/chats/{id}/messages", s.Auth.Middleware(http.HandlerFunc(s.listMessages)))
-	mux.Handle("POST /api/chats/{id}/messages", s.Auth.Middleware(http.HandlerFunc(s.sendMessage)))
-	mux.Handle("GET /api/projects/{slug}/epics", s.Auth.Middleware(http.HandlerFunc(s.listEpics)))
-	mux.Handle("POST /api/projects/{slug}/epics", s.Auth.Middleware(http.HandlerFunc(s.createEpic)))
-	mux.Handle("GET /api/epics/{id}", s.Auth.Middleware(http.HandlerFunc(s.getEpic)))
-	mux.Handle("DELETE /api/epics/{id}", s.Auth.Middleware(http.HandlerFunc(s.deleteEpic)))
-	mux.Handle("GET /api/tasks/{id}", s.Auth.Middleware(http.HandlerFunc(s.getTask)))
-	mux.Handle("PATCH /api/tasks/{id}", s.Auth.Middleware(http.HandlerFunc(s.patchTask)))
-	mux.Handle("DELETE /api/tasks/{id}", s.Auth.Middleware(http.HandlerFunc(s.deleteTask)))
-	mux.Handle("GET /api/tasks/{id}/comments", s.Auth.Middleware(http.HandlerFunc(s.listComments)))
-	mux.Handle("POST /api/tasks/{id}/comments", s.Auth.Middleware(http.HandlerFunc(s.addComment)))
-	mux.Handle("GET /api/tasks/{id}/dependencies", s.Auth.Middleware(http.HandlerFunc(s.listDependencies)))
-	mux.Handle("POST /api/tasks/{id}/dependencies", s.Auth.Middleware(http.HandlerFunc(s.addDependency)))
-	mux.Handle("DELETE /api/tasks/{id}/dependencies/{dep}", s.Auth.Middleware(http.HandlerFunc(s.deleteDependency)))
-	mux.Handle("GET /api/projects/{slug}/events", s.Auth.Middleware(http.HandlerFunc(s.sseEvents)))
+	mux.Handle("GET /api/projects/{slug}/tasks", s.projectAccess("project", false, s.listTasks))
+	mux.Handle("GET /api/projects/{slug}/members", s.projectAccess("project", false, s.listMembers))
+	mux.Handle("GET /api/projects/{slug}/role", s.projectAccess("project", false, s.getProjectRole))
+	mux.Handle("PUT /api/projects/{slug}/members", s.projectAccess("project", false, s.setMemberRole))
+	mux.Handle("POST /api/projects/{slug}/tasks", s.projectAccess("project", true, s.createTask))
+	mux.Handle("POST /api/projects/{slug}/imports/akhcheck", s.projectAccess("project", true, s.importAkhcheckCourse))
+	mux.Handle("POST /api/projects/{slug}/imports/bitrix24", s.projectAccess("project", true, s.importBitrixTasks))
+	mux.Handle("POST /api/projects/{slug}/imports/trello", s.projectAccess("project", true, s.importTrello))
+	mux.Handle("GET /api/projects/{slug}/chats", s.projectAccess("project", false, s.listChats))
+	mux.Handle("POST /api/projects/{slug}/chats", s.projectAccess("project", true, s.createChat))
+	mux.Handle("GET /api/chats/{id}/messages", s.projectAccess("chat", false, s.listMessages))
+	mux.Handle("POST /api/chats/{id}/messages", s.projectAccess("chat", true, s.sendMessage))
+	mux.Handle("GET /api/projects/{slug}/epics", s.projectAccess("project", false, s.listEpics))
+	mux.Handle("POST /api/projects/{slug}/epics", s.projectAccess("project", true, s.createEpic))
+	mux.Handle("GET /api/epics/{id}", s.projectAccess("epic", false, s.getEpic))
+	mux.Handle("DELETE /api/epics/{id}", s.projectAccess("epic", true, s.deleteEpic))
+	mux.Handle("GET /api/tasks/{id}", s.projectAccess("task", false, s.getTask))
+	mux.Handle("PATCH /api/tasks/{id}", s.projectAccess("task", true, s.patchTask))
+	mux.Handle("DELETE /api/tasks/{id}", s.projectAccess("task", true, s.deleteTask))
+	mux.Handle("GET /api/tasks/{id}/comments", s.projectAccess("task", false, s.listComments))
+	mux.Handle("POST /api/tasks/{id}/comments", s.projectAccess("task", true, s.addComment))
+	mux.Handle("GET /api/tasks/{id}/dependencies", s.projectAccess("task", false, s.listDependencies))
+	mux.Handle("POST /api/tasks/{id}/dependencies", s.projectAccess("task", true, s.addDependency))
+	mux.Handle("DELETE /api/tasks/{id}/dependencies/{dep}", s.projectAccess("task", true, s.deleteDependency))
+	mux.Handle("GET /api/projects/{slug}/events", s.projectAccess("project", false, s.sseEvents))
+	mux.Handle("GET /api/projects/{slug}/agent/usage", s.projectAccess("project", false, s.getAgentUsage))
 	mux.Handle("POST /api/agent/chat", s.Auth.Middleware(http.HandlerFunc(s.agentChat)))
 	return mux
 }
@@ -268,6 +271,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title required"})
 		return
 	}
+	if req.AssigneeID != nil {
+		if !s.validateAssignee(w, r, p.ID, *req.AssigneeID) {
+			return
+		}
+	}
 	status := req.Status
 	if status == "" {
 		status = domain.StatusTodo
@@ -310,19 +318,41 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": tid})
 }
 
+func (s *Server) taskForMember(w http.ResponseWriter, r *http.Request, id int64) (*domain.Task, bool) {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return nil, false
+	}
+	task, err := s.Store.TaskByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load task"})
+		return nil, false
+	}
+	if task == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return nil, false
+	}
+	member, err := s.Store.IsMember(r.Context(), task.ProjectID, uid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not check project access"})
+		return nil, false
+	}
+	if !member {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return nil, false
+	}
+	return task, true
+}
+
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
-	t, err := s.Store.TaskByID(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	t, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	comments, err := s.Store.ListComments(r.Context(), id)
@@ -354,13 +384,8 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
-	t, err := s.Store.TaskByID(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if t == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	t, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	var body map[string]any
@@ -461,11 +486,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			args = append(args, nil)
 		} else {
 			f, ok := v.(float64)
-			if !ok {
+			if !ok || f < 1 || f >= 9223372036854775808.0 || math.Trunc(f) != f {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad assignee_id"})
 				return
 			}
 			n := int64(f)
+			if !s.validateAssignee(w, r, t.ProjectID, n) {
+				return
+			}
 			sets = append(sets, "assignee_id")
 			args = append(args, n)
 		}
@@ -532,6 +560,19 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) validateAssignee(w http.ResponseWriter, r *http.Request, projectID, userID int64) bool {
+	err := s.Store.ValidateAssignee(r.Context(), projectID, userID)
+	if errors.Is(err, store.ErrAssigneeNotMember) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return false
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "assignee lookup failed"})
+		return false
+	}
+	return true
 }
 
 // deleteTask removes a task with all its comments, labels, attachments and
@@ -642,6 +683,9 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
+	if _, ok := s.taskForMember(w, r, id); !ok {
+		return
+	}
 	comments, err := s.Store.ListComments(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -654,6 +698,10 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	task, ok := s.taskForMember(w, r, id)
+	if !ok {
 		return
 	}
 	uid, err := UserFrom(r.Context())
@@ -674,7 +722,7 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Bus != nil {
-		s.Bus.Publish(events.Event{Type: "task_comment", ProjectID: 0, TaskID: id, Title: "", Actor: s.Auth.ActorName(r.Context())})
+		s.Bus.Publish(events.Event{Type: "task_comment", ProjectID: task.ProjectID, TaskID: id, Title: task.Title, Actor: s.Auth.ActorName(r.Context())})
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": cid})
 }

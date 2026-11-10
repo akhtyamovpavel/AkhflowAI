@@ -56,9 +56,23 @@ func TestAgentUsageIsolationAndPeriods(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	viewer, err := db.CreateUser(ctx, "viewer@example.invalid", "Viewer", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editor, err := db.CreateUser(ctx, "editor@example.invalid", "Editor", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
 	projectID, err := db.CreateProject(ctx, "usage-one", "Project", owner)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for id, role := range map[int64]string{viewer: "viewer", editor: "editor"} {
+		ok, err := db.SetProjectMemberRole(ctx, projectID, owner, id, role)
+		if err != nil || !ok {
+			t.Fatalf("set role %s: %v", role, err)
+		}
 	}
 	otherID, err := db.CreateProject(ctx, "usage-two", "Other", outsider)
 	if err != nil {
@@ -161,6 +175,32 @@ func TestAgentUsageIsolationAndPeriods(t *testing.T) {
 		t.Fatal("agent usage tool missing from registry")
 	}
 	args := json.RawMessage(`{"project":"usage-one","days":7}`)
+	for name, id := range map[string]int64{"viewer": viewer, "editor": editor} {
+		token, err := auth.CreateToken(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := request(token, path+"?days=7")
+		var usage store.AgentUsage
+		if err := json.Unmarshal(response.Body.Bytes(), &usage); err != nil {
+			t.Fatal(err)
+		}
+		want := store.AgentUsage{Days: 7, Requests: 1, Replies: 1, ToolCalls: 2}
+		if response.Code != http.StatusOK || usage != want {
+			t.Errorf("%s REST usage: status %d, result %+v", name, response.Code, usage)
+		}
+		if got := request(token, "/api/projects/usage-two/agent/usage").Code; got != http.StatusForbidden {
+			t.Errorf("%s REST foreign project: %d", name, got)
+		}
+		result, err := tool.Handler(ctx, toolbox.Deps{Store: db, ActorID: id}, args)
+		if err != nil || !result.Ok || result.Data != want {
+			t.Errorf("%s tool usage: %+v, error: %v", name, result, err)
+		}
+		_, err = tool.Handler(ctx, toolbox.Deps{Store: db, ActorID: id}, json.RawMessage(`{"project":"usage-two"}`))
+		if err == nil {
+			t.Errorf("%s could access foreign project through tool", name)
+		}
+	}
 	result, err := tool.Handler(ctx, toolbox.Deps{Store: db, ActorID: owner}, args)
 	if err != nil || !result.Ok || result.Data != (store.AgentUsage{Days: 7, Requests: 1, Replies: 1, ToolCalls: 2}) {
 		t.Fatalf("tool result: %+v, error: %v", result, err)
