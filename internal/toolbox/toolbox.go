@@ -378,14 +378,17 @@ var Registry = []Tool{
 					}
 				}
 			}
-			if err := d.Store.UpdateTask(ctx, id, []string{"status"}, []any{status}); err != nil {
+			statusChanged, err := d.Store.UpdateTaskWithStatusChange(ctx, id, []string{"status"}, []any{status})
+			if err != nil {
 				return Result{}, err
 			}
 			eid := id
 			if err := d.Store.Audit(ctx, d.Actor, "move_task", "task", &eid, map[string]any{"status": status}); err != nil {
 				return Result{}, err
 			}
-			publishEvent(d, events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Status: status, Actor: d.Actor})
+			if statusChanged {
+				publishEvent(d, events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Status: status, Actor: d.Actor})
+			}
 			return Result{Ok: true, Message: fmt.Sprintf("task %d moved to %s", id, status)}, nil
 		},
 	},
