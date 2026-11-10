@@ -7,7 +7,7 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 });
 const moduleURL = `data:text/javascript;base64,${Buffer.from(compiled.outputText).toString("base64")}`;
-const { summarizeDashboard } = await import(moduleURL);
+const { summarizeDashboard, summarizeEpics } = await import(moduleURL);
 
 const tasks = [
   { status: "backlog", priority: "high", assignee_id: 1 },
@@ -35,3 +35,24 @@ assert.deepEqual(counts(empty.assignees), { unassigned: 0 });
 assert.ok(empty.statuses.every((row) => row.count === 0));
 assert.ok(empty.priorities.every((row) => row.count === 0));
 console.log("PASS: dashboard totals, categories, missing assignees and empty project");
+
+const epics = [
+  { id: 1, title: "Первый" },
+  { id: 2, title: "Пустой" },
+  { id: 3, title: "Завершённый" },
+];
+const epicTasks = [
+  { epic_id: 1, status: "done" },
+  { epic_id: 1, status: "todo" },
+  { epic_id: 1, status: "in_progress" },
+  { epic_id: 3, status: "done" },
+  { epic_id: null, status: "done" },
+  { epic_id: 99, status: "done" },
+];
+assert.deepEqual(summarizeEpics(epicTasks, epics), [
+  { id: 1, title: "Первый", done: 1, total: 3, percent: 33 },
+  { id: 2, title: "Пустой", done: 0, total: 0, percent: 0 },
+  { id: 3, title: "Завершённый", done: 1, total: 1, percent: 100 },
+]);
+assert.deepEqual(summarizeEpics(epicTasks, []), []);
+console.log("PASS: epic completion, empty epics, unrelated tasks and rounding");

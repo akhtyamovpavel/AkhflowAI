@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { QuickSearch } from "@/components/QuickSearch";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -260,13 +261,13 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function Kanban({ tasks, epics, onOpen, onMove }: { tasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => void }) {
+function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; allTasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => void }) {
   const idx = (s: string) => COLUMNS.findIndex((c) => c.id === s);
   const overdue = (t: Task) =>
     !!t.due_date && t.status !== "done" && new Date(`${t.due_date}T23:59:59`) < new Date();
   const blockedCount = (t: Task) =>
     (t.depends_on ?? []).filter((id) => {
-      const dep = tasks.find((x) => x.id === id);
+      const dep = allTasks.find((x) => x.id === id);
       return dep && dep.status !== "done";
     }).length;
   return (
@@ -418,6 +419,7 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
       <Button
         size="sm"
         variant="ghost"
+        aria-label={`Удалить связь с задачей #${d.id}: ${d.title}`}
         disabled={removingDependency}
         onClick={() => {
           if (direction === "depends") {
@@ -426,7 +428,9 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
             void removeDep(d.id, taskId);
           }
         }}
-      ><X /></Button>
+      >
+        <X />
+      </Button>
     </div>
   );
 
@@ -446,7 +450,9 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
       >
         <div className="flex items-center justify-between border-b p-4">
           <span className="text-sm text-muted-foreground">Задача #{task.id}</span>
-          <Button size="sm" variant="ghost" onClick={onClose}><X /></Button>
+          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+            <X />
+          </Button>
         </div>
         <div className="space-y-4 p-4">
           <Input
@@ -602,6 +608,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksProject, setTasksProject] = useState("");
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -610,6 +617,7 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [epics, setEpics] = useState<Epic[]>([]);
+  const [epicsProject, setEpicsProject] = useState("");
   const [epicFilter, setEpicFilter] = useState<string>("all");
   const [showNewEpic, setShowNewEpic] = useState(false);
   const [newEpicTitle, setNewEpicTitle] = useState("");
@@ -643,6 +651,7 @@ export default function App() {
     if (!token || !project) return;
     const data: Task[] = (await api(`/api/projects/${project}/tasks`, {}, token)) ?? [];
     setTasks(data);
+    setTasksProject(project);
   }, [token, project]);
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
@@ -650,11 +659,12 @@ export default function App() {
   }, [token, project]);
 
   const loadDashboard = useCallback(async (signal: AbortSignal) => {
-    const [projectTasks, projectMembers] = await Promise.all([
+    const [projectTasks, projectMembers, projectEpics] = await Promise.all([
       api(`/api/projects/${project}/tasks`, { signal }, token),
       api(`/api/projects/${project}/members`, { signal }, token),
+      api(`/api/projects/${project}/epics`, { signal }, token),
     ]);
-    return { tasks: projectTasks ?? [], members: projectMembers ?? [] };
+    return { tasks: projectTasks ?? [], members: projectMembers ?? [], epics: projectEpics ?? [] };
   }, [token, project]);
 
   const loadChats = useCallback(async () => {
@@ -692,6 +702,7 @@ export default function App() {
     if (!token || !project) return;
     const data: Epic[] = (await api(`/api/projects/${project}/epics`, {}, token)) ?? [];
     setEpics(data);
+    setEpicsProject(project);
   }, [token, project]);
 
   useEffect(() => {
@@ -938,6 +949,19 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
         {project && (
+          <QuickSearch
+            key={project}
+            tasks={tasksProject === project ? tasks : []}
+            epics={epicsProject === project ? epics : []}
+            ready={tasksProject === project && epicsProject === project}
+            onTaskOpen={setOpenTaskId}
+            onEpicOpen={(id) => {
+              setEpicFilter(String(id));
+              setView("kanban");
+            }}
+          />
+        )}
+        {project && (
           <div className="space-y-2">
             <Button size="sm" variant="outline" onClick={() => setShowBitrixImport(!showBitrixImport)}>
               Импорт из Bitrix24
@@ -971,11 +995,11 @@ export default function App() {
           <Button size="sm" onClick={createTask}><Plus /> Добавить</Button>
         </div>
 
-        {view === "kanban" && <Kanban tasks={visibleTasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
+        {view === "kanban" && <Kanban tasks={visibleTasks} allTasks={tasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} />
+            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} epicsRevision={epics} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 

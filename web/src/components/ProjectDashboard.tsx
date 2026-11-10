@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { summarizeDashboard } from "@/lib/dashboard";
-import type { DashboardMember, DashboardRow, DashboardTask } from "@/lib/dashboard";
+import { summarizeDashboard, summarizeEpics } from "@/lib/dashboard";
+import type { DashboardEpic, DashboardMember, DashboardRow, DashboardTask } from "@/lib/dashboard";
 
 type DashboardData = {
   tasks: DashboardTask[];
   members: DashboardMember[];
+  epics: DashboardEpic[];
 };
 
 type Props = {
   load: (signal: AbortSignal) => Promise<DashboardData>;
   revision: unknown;
+  epicsRevision: unknown;
 };
 
 function Breakdown({ title, rows, total }: { title: string; rows: DashboardRow[]; total: number }) {
@@ -40,7 +42,7 @@ function Breakdown({ title, rows, total }: { title: string; rows: DashboardRow[]
   );
 }
 
-export function ProjectDashboard({ load, revision }: Props) {
+export function ProjectDashboard({ load, revision, epicsRevision }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -58,9 +60,10 @@ export function ProjectDashboard({ load, revision }: Props) {
       }
     });
     return () => controller.abort();
-  }, [load, refresh, revision]);
+  }, [load, refresh, revision, epicsRevision]);
 
   const summary = data && summarizeDashboard(data.tasks, data.members);
+  const epicProgress = data && summarizeEpics(data.tasks, data.epics);
   return (
     <section aria-label="Сводка проекта" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -81,6 +84,31 @@ export function ProjectDashboard({ load, revision }: Props) {
             <Breakdown title="По приоритетам" rows={summary.priorities} total={summary.total} />
             <Breakdown title="По исполнителям" rows={summary.assignees} total={summary.total} />
           </div>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Прогресс эпиков</CardTitle></CardHeader>
+            <CardContent>
+              {epicProgress?.length === 0 && (
+                <p className="text-sm text-muted-foreground">В проекте пока нет эпиков.</p>
+              )}
+              <ul className="space-y-4">
+                {epicProgress?.map((epic) => (
+                  <li key={epic.id}>
+                    <div className="flex flex-wrap justify-between gap-2 text-sm">
+                      <span className="min-w-0 break-words font-medium">{epic.title}</span>
+                      <span className="tabular-nums">{epic.done} из {epic.total} · {epic.percent}%</span>
+                    </div>
+                    <progress
+                      className="mt-1 h-2 w-full accent-primary"
+                      max={100}
+                      value={epic.percent}
+                      aria-label={`Прогресс эпика ${epic.title}`}
+                      aria-valuetext={`${epic.done} из ${epic.total}, ${epic.percent}%`}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         </>
       )}
     </section>
