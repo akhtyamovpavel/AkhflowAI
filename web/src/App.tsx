@@ -18,6 +18,7 @@ import { TaskAttachments } from "@/components/TaskAttachments";
 import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
 import { readSharedTask, telegramShareURL } from "@/lib/taskShare";
 import type { SharedTask } from "@/lib/taskShare";
+import { subscribeProjectEvents } from "@/lib/projectEvents";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -837,7 +838,10 @@ function ProjectWorkspace({
   const [bulkStatus, setBulkStatus] = useState("backlog");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
+  const [eventNotice, setEventNotice] = useState<{ text: string; taskId: number | null } | null>(null);
   const newTaskInput = useRef<HTMLInputElement>(null);
+  const taskRequest = useRef(0);
+  const projectId = projects.find((item) => item.slug === project)?.id;
 
   useEffect(() => {
     const focusNewTask = (event: KeyboardEvent) => {
@@ -854,7 +858,9 @@ function ProjectWorkspace({
 
   const loadTasks = useCallback(async () => {
     if (!token || !project) return;
+    const request = ++taskRequest.current;
     const data: Task[] = (await api(`/api/projects/${project}/tasks`, {}, token)) ?? [];
+    if (!mounted.current || request !== taskRequest.current) return;
     setTasks(data);
     setTasksProject(project);
   }, [token, project]);
@@ -940,6 +946,70 @@ function ProjectWorkspace({
   useEffect(() => {
     loadTasks();
   }, [loadTasks, project]);
+
+  useEffect(() => {
+    if (!project || !projectId) return;
+    const controller = new AbortController();
+    let refreshing = false;
+    let refreshPending = false;
+    let noticeTimer: number | undefined;
+    const refresh = async () => {
+      refreshPending = true;
+      if (refreshing) return;
+      refreshing = true;
+      while (refreshPending && !controller.signal.aborted) {
+        refreshPending = false;
+        const request = ++taskRequest.current;
+        try {
+          const path = `/api/projects/${encodeURIComponent(project)}/tasks`;
+          const response = await fetch(API + path, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error("Task refresh failed");
+          const data: Task[] = await response.json();
+          if (!controller.signal.aborted && request === taskRequest.current) {
+            setTasks(data ?? []);
+            setTasksProject(project);
+          }
+        } catch {
+          // A later event or reconnection retries the refresh.
+        }
+      }
+      refreshing = false;
+    };
+    const labels: Record<string, string> = {
+      task_created: "Создана задача",
+      task_moved: "Изменён статус задачи",
+      task_updated: "Изменена задача",
+      task_deleted: "Удалена задача",
+      task_comment: "Новый комментарий к задаче",
+      dependency_added: "Добавлена зависимость задачи",
+      dependency_removed: "Удалена зависимость задачи",
+    };
+    const path = `${API}/api/projects/${encodeURIComponent(project)}/events`;
+    const unsubscribe = subscribeProjectEvents(path, token, {
+      onConnect: () => { void refresh(); },
+      onEvent: (value) => {
+        if (controller.signal.aborted || !value || typeof value !== "object") return;
+        const event = value as Record<string, unknown>;
+        if (event.project_id !== projectId || typeof event.type !== "string" || !Object.hasOwn(labels, event.type)) return;
+        const title = typeof event.title === "string" ? event.title : "";
+        const text = title ? `${labels[event.type]}: ${title}` : labels[event.type];
+        const validTaskId = typeof event.task_id === "number" && Number.isSafeInteger(event.task_id) && event.task_id > 0;
+        const taskId = validTaskId && event.type !== "task_deleted" ? event.task_id as number : null;
+        setEventNotice({ text, taskId });
+        window.clearTimeout(noticeTimer);
+        noticeTimer = window.setTimeout(() => setEventNotice(null), 6000);
+        void refresh();
+      },
+    });
+    return () => {
+      controller.abort();
+      unsubscribe();
+      window.clearTimeout(noticeTimer);
+    };
+  }, [project, projectId, token]);
 
   useEffect(() => {
     if (!sharedTask || sharedTask.project !== project || tasksProject !== project) return;
@@ -1495,6 +1565,16 @@ function ProjectWorkspace({
           </div>
         )}
       </main>
+
+      {eventNotice && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-md border bg-background p-3 shadow-lg" role="status">
+          {eventNotice.taskId ? (
+            <button type="button" onClick={() => { setOpenTaskId(eventNotice.taskId); setEventNotice(null); }}>
+              {eventNotice.text}
+            </button>
+          ) : eventNotice.text}
+        </div>
+      )}
 
       {openTaskId && (
         <TaskDetail
