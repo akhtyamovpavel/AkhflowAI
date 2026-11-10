@@ -261,6 +261,9 @@ var Registry = []Tool{
 				if u == nil {
 					return Result{}, fmt.Errorf("assignee %q not found", em)
 				}
+				if err := d.Store.ValidateAssignee(ctx, p.ID, u.ID); err != nil {
+					return Result{}, err
+				}
 				t.AssigneeID = &u.ID
 			}
 			if raw, ok := v["labels"].([]any); ok {
@@ -435,7 +438,7 @@ var Registry = []Tool{
 	},
 	{
 		Name:        "set_assignee",
-		Description: "Assign a task to a user by email",
+		Description: "Assign a task to a project member by email, or clear it with an empty email",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -454,12 +457,39 @@ var Registry = []Tool{
 				return Result{}, errors.New("task_id is required")
 			}
 			id := int64(idf)
-			u, err := d.Store.UserByEmail(ctx, str(v, "email"))
+			task, err := d.Store.TaskByID(ctx, id)
+			if err != nil {
+				return Result{}, err
+			}
+			if task == nil {
+				return Result{}, errors.New("task not found")
+			}
+			member, err := d.Store.IsMember(ctx, task.ProjectID, d.ActorID)
+			if err != nil {
+				return Result{}, err
+			}
+			if !member {
+				return Result{}, errors.New("access denied")
+			}
+			email, ok := v["email"].(string)
+			if !ok {
+				return Result{}, errors.New("email is required")
+			}
+			if email == "" {
+				if err := d.Store.UpdateTask(ctx, id, []string{"assignee_id"}, []any{nil}); err != nil {
+					return Result{}, err
+				}
+				return Result{Ok: true, Message: fmt.Sprintf("assignee cleared for task %d", id)}, nil
+			}
+			u, err := d.Store.UserByEmail(ctx, email)
 			if err != nil {
 				return Result{}, err
 			}
 			if u == nil {
 				return Result{}, errors.New("assignee not found")
+			}
+			if err := d.Store.ValidateAssignee(ctx, task.ProjectID, u.ID); err != nil {
+				return Result{}, err
 			}
 			if err := d.Store.UpdateTask(ctx, id, []string{"assignee_id"}, []any{u.ID}); err != nil {
 				return Result{}, err

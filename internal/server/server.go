@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -267,6 +268,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title required"})
 		return
 	}
+	if req.AssigneeID != nil {
+		if !s.validateAssignee(w, r, p.ID, *req.AssigneeID) {
+			return
+		}
+	}
 	status := req.Status
 	if status == "" {
 		status = domain.StatusTodo
@@ -460,11 +466,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			args = append(args, nil)
 		} else {
 			f, ok := v.(float64)
-			if !ok {
+			if !ok || f < 1 || f >= 9223372036854775808.0 || math.Trunc(f) != f {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad assignee_id"})
 				return
 			}
 			n := int64(f)
+			if !s.validateAssignee(w, r, t.ProjectID, n) {
+				return
+			}
 			sets = append(sets, "assignee_id")
 			args = append(args, n)
 		}
@@ -531,6 +540,19 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) validateAssignee(w http.ResponseWriter, r *http.Request, projectID, userID int64) bool {
+	err := s.Store.ValidateAssignee(r.Context(), projectID, userID)
+	if errors.Is(err, store.ErrAssigneeNotMember) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return false
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "assignee lookup failed"})
+		return false
+	}
+	return true
 }
 
 // deleteTask removes a task with all its comments, labels, attachments and
