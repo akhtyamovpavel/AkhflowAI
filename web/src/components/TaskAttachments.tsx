@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,18 +13,54 @@ type Props = {
   taskId: number;
   token: string | null;
   apiBase: string;
+  project: string;
 };
 
 const maxFileSize = 10 * 1024 * 1024;
 
-export function TaskAttachments({ taskId, token, apiBase }: Props) {
+export function TaskAttachments({ taskId, token, apiBase, project }: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [inputKey, setInputKey] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState("");
+  const roleRequest = useRef(0);
   const endpoint = `${apiBase}/api/tasks/${taskId}/attachments`;
+  const canUpload = ["owner", "admin", "editor", "member"].includes(role);
+
+  const refreshRole = useCallback(async () => {
+    const current = ++roleRequest.current;
+    try {
+      const response = await fetch(`${apiBase}/api/projects/${encodeURIComponent(project)}/role`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("role lookup failed");
+      const data: { role: string } = await response.json();
+      if (roleRequest.current === current) setRole(data.role);
+    } catch {
+      if (roleRequest.current === current) setRole("");
+    }
+  }, [apiBase, project, token]);
+
+  useEffect(() => {
+    setRole("");
+    if (!token || !project) return;
+    void refreshRole();
+    const refresh = () => { void refreshRole(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      roleRequest.current++;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [project, token, refreshRole]);
+
+  useEffect(() => {
+    if (!canUpload) setFile(null);
+  }, [canUpload]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(endpoint, {
@@ -56,7 +92,7 @@ export function TaskAttachments({ taskId, token, apiBase }: Props) {
 
   const upload = async (event: FormEvent) => {
     event.preventDefault();
-    if (!file || !token || busy) return;
+    if (!file || !token || busy || !canUpload) return;
     if (file.size > maxFileSize) {
       setError("Размер файла не должен превышать 10 МиБ.");
       return;
@@ -72,6 +108,7 @@ export function TaskAttachments({ taskId, token, apiBase }: Props) {
         body: form,
       });
       if (!response.ok) {
+        if (response.status === 403) void refreshRole();
         throw new Error("upload failed");
       }
       setFile(null);
@@ -124,7 +161,7 @@ export function TaskAttachments({ taskId, token, apiBase }: Props) {
           </li>
         ))}
       </ul>
-      <form onSubmit={upload} className="space-y-2">
+      {canUpload && <form onSubmit={upload} className="space-y-2">
         <label htmlFor="task-attachment" className="text-sm">Добавить файл, до 10 МиБ</label>
         <Input
           key={inputKey}
@@ -136,7 +173,7 @@ export function TaskAttachments({ taskId, token, apiBase }: Props) {
         <Button type="submit" size="sm" disabled={!file || busy}>
           {busy ? "Загружаем…" : "Загрузить"}
         </Button>
-      </form>
+      </form>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </section>
   );

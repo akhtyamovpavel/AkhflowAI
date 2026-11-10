@@ -416,8 +416,9 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
-function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
+function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
   taskId: number;
+  project: string;
   epics: Epic[];
   members: Member[];
   tasks: Task[];
@@ -642,7 +643,7 @@ function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen
               </div>
             )}
           </div>
-          <TaskAttachments taskId={taskId} token={token} apiBase={API} />
+          <TaskAttachments taskId={taskId} token={token} apiBase={API} project={project} />
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>
@@ -1457,6 +1458,7 @@ function ProjectWorkspace({
         <TaskDetail
           key={openTaskId}
           taskId={openTaskId}
+          project={project}
           epics={epics}
           members={members}
           tasks={tasks}
