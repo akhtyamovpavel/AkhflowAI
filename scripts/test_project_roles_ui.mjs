@@ -51,8 +51,18 @@ try {
   });
   await context.addInitScript(() => localStorage.setItem("akhflow.token", "fixture-token"));
   const page = await context.newPage();
+  const duplicateKeyWarnings = [];
+  page.on("console", (message) => {
+    if (message.text().includes("same key")) duplicateKeyWarnings.push(message.text());
+  });
+  const assertSinglePanels = async () => {
+    assert.equal(await page.getByRole("region", { name: "Права проекта" }).count(), 1);
+    assert.equal(await page.getByRole("region", { name: "Поиск по проекту" }).count(), 1);
+    assert.equal(await page.getByLabel("Поиск по задачам и эпикам").count(), 1);
+  };
   await page.goto(url);
   await page.getByRole("button", { name: "Участники и роли" }).click();
+  await assertSinglePanels();
   await page.getByLabel("Email зарегистрированного пользователя").fill("editor@example.invalid");
   await page.getByLabel("Роль", { exact: true }).selectOption("editor");
   await page.getByRole("button", { name: "Сохранить права" }).click();
@@ -62,9 +72,14 @@ try {
   await page.reload();
   await page.getByText("Доступ к проекту: только просмотр.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Участники и роли" }).count(), 0);
+  await assertSinglePanels();
   await page.getByPlaceholder("Новая задача...").fill("Запрещённая задача");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await page.getByRole("alert").getByText("Недостаточно прав для выполнения действия.", { exact: false }).waitFor();
+  await assertSinglePanels();
+  await page.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await assertSinglePanels();
+  assert.deepEqual(duplicateKeyWarnings, []);
   console.log("PASS: owner can manage roles and viewer sees read-only status");
 } finally {
   if (browser) await browser.close();
