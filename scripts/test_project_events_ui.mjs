@@ -43,6 +43,11 @@ try {
       if (!requestURL.endsWith("/events")) return originalFetch(input, options);
       const stream = { url: requestURL, authorization: options.headers.Authorization, signal: options.signal, aborted: false };
       window.streams.push(stream);
+      if (window.nextStatus) {
+        const status = window.nextStatus;
+        window.nextStatus = null;
+        return Promise.resolve(new Response(null, { status }));
+      }
       const body = new ReadableStream({
         start(controller) {
           stream.controller = controller;
@@ -134,7 +139,15 @@ try {
   });
   assert.equal(next.url, "/api/projects/beta/events");
   assert.equal(next.authorization, "Bearer second-fixture-token");
-  console.log("PASS: streamed events, project isolation, reconnect, account switch and bearer credentials");
+  const count = await page.evaluate(() => {
+    window.nextStatus = 403;
+    window.streams.find((stream) => !stream.aborted).controller.close();
+    return window.streams.length;
+  });
+  await page.waitForFunction((previous) => window.streams.length > previous, count);
+  await page.waitForTimeout(2200);
+  assert.equal(await page.evaluate(() => window.streams.length), count + 1, "access denial must stop retries");
+  console.log("PASS: streamed events, project isolation, reconnect, denied access, account switch and bearer credentials");
 } finally {
   if (browser) await browser.close();
   server.kill();
