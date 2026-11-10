@@ -30,7 +30,7 @@ try {
   assert.ok(ready, "Vite did not start");
   browser = await playwright.chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
   const task = { id: 1, title: "Обсудить & проверить #1?", status: "backlog", priority: "low" };
-  const configure = async (context, outsider = false) => {
+  const configure = async (context, outsider = false, holdAlphaTasks = null) => {
     await context.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
       let data = [];
@@ -41,7 +41,10 @@ try {
           { id: 2, slug: "beta", name: "Бета" },
         ];
       }
-      if (path === "/api/projects/alpha/tasks") data = [task];
+      if (path === "/api/projects/alpha/tasks") {
+        if (holdAlphaTasks) await holdAlphaTasks();
+        data = [task];
+      }
       if (path === "/api/projects/alpha/role" || path === "/api/projects/beta/role") data = { role: "viewer" };
       if (path === "/api/tasks/1") {
         assert.equal(outsider, false, "outsider must not request task details");
@@ -119,6 +122,31 @@ try {
   await mismatched.locator("header select").first().waitFor();
   await mismatched.waitForTimeout(200);
   assert.equal(await mismatched.getByRole("button", { name: "Обсудить в Telegram" }).count(), 0);
+
+  let releaseTasks;
+  let notifyHeld;
+  const tasksReleased = new Promise((resolve) => { releaseTasks = resolve; });
+  const tasksHeld = new Promise((resolve) => { notifyHeld = resolve; });
+  const switching = await browser.newContext();
+  await configure(switching, false, async () => {
+    notifyHeld();
+    await tasksReleased;
+  });
+  await switching.addInitScript(() => localStorage.setItem("akhflow.token", "switching-session"));
+  const switchingPage = await switching.newPage();
+  let taskDetailRequests = 0;
+  switchingPage.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/tasks/1") taskDetailRequests++;
+  });
+  await switchingPage.goto(link.href);
+  await tasksHeld;
+  await switchingPage.locator("header select").first().selectOption("beta");
+  releaseTasks();
+  await switchingPage.locator("header select").first().selectOption("alpha");
+  await switchingPage.getByRole("button", { name: task.title, exact: true }).waitFor();
+  await switchingPage.waitForTimeout(200);
+  assert.equal(taskDetailRequests, 0, "switching projects must cancel the pending task link");
+  assert.equal(await switchingPage.getByRole("button", { name: "Закрыть карточку задачи" }).count(), 0);
   console.log("PASS: Telegram share, safe URL, login, project access and deployment path");
 } finally {
   if (browser) await browser.close();

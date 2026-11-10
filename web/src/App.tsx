@@ -726,6 +726,13 @@ function AccountWorkspace({ token, saveToken }: {
     window.history.replaceState(window.history.state, "", url);
   }, []);
 
+  const selectProject = useCallback((nextProject: string) => {
+    if (sharedTask && nextProject !== sharedTask.project) {
+      consumeSharedTask();
+    }
+    setProject(nextProject);
+  }, [sharedTask, consumeSharedTask]);
+
   const loadProjects = useCallback(async () => {
     if (!token) return;
     const data: Project[] = (await api("/api/projects", {}, token)) ?? [];
@@ -757,7 +764,7 @@ function AccountWorkspace({ token, saveToken }: {
       saveToken={saveToken}
       project={project}
       projects={projects}
-      setProject={setProject}
+      setProject={selectProject}
       loadProjects={loadProjects}
       view={view}
       setView={setView}
