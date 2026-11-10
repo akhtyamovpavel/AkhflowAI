@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
+import { reminderUserId } from "@/lib/deadlines";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { AgentUsage } from "@/components/AgentUsage";
@@ -1296,6 +1297,7 @@ function ProjectWorkspace({
         )}
         {project && (
           <DeadlineReminders
+            userId={reminderUserId(token)}
             project={project}
             fetchTasks={fetchDeadlineTasks}
             onOpen={setOpenTaskId}
