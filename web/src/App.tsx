@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
-import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X } from "lucide-react";
+import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
   id: number;
@@ -534,7 +535,7 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
 
 export default function App() {
   const [token, saveToken] = useToken();
-  const [view, setView] = useState<"kanban" | "list" | "agent">("kanban");
+  const [view, setView] = useState<"kanban" | "list" | "dashboard" | "agent">("kanban");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -575,6 +576,14 @@ export default function App() {
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
     return (await api(`/api/projects/${project}/tasks`, { signal }, token)) ?? [];
+  }, [token, project]);
+
+  const loadDashboard = useCallback(async (signal: AbortSignal) => {
+    const [projectTasks, projectMembers] = await Promise.all([
+      api(`/api/projects/${project}/tasks`, { signal }, token),
+      api(`/api/projects/${project}/members`, { signal }, token),
+    ]);
+    return { tasks: projectTasks ?? [], members: projectMembers ?? [] };
   }, [token, project]);
 
   const loadChats = useCallback(async () => {
@@ -790,6 +799,9 @@ export default function App() {
             <Button variant={view === "list" ? "default" : "ghost"} size="sm" onClick={() => setView("list")}>
               <ListTodo /> Список
             </Button>
+            <Button variant={view === "dashboard" ? "default" : "ghost"} size="sm" onClick={() => setView("dashboard")}>
+              <ChartNoAxesCombined /> Сводка
+            </Button>
             <Button variant={view === "agent" ? "default" : "ghost"} size="sm" onClick={() => setView("agent")}>
               <MessageSquare /> Агент
             </Button>
@@ -821,6 +833,12 @@ export default function App() {
         </div>
 
         {view === "kanban" && <Kanban tasks={visibleTasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
+
+        {view === "dashboard" && (
+          project
+            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} />
+            : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
+        )}
 
         {view === "list" && (
           <Card>

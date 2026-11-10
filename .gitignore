@@ -1,4 +1,5 @@
 bin/
+.worktrees/
 data/
 .env
 .env-cli
