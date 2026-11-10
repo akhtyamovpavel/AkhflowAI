@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -536,9 +535,11 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			args = append(args, n)
 		}
 	}
-	var statusChanged bool
+	var transition store.TaskTransition
 	if _, hasStatus := body["status"]; hasStatus {
-		statusChanged, err = s.Store.UpdateTaskWithStatusChange(r.Context(), id, sets, args)
+		actorID, _ := UserFrom(r.Context())
+		actor := s.Auth.ActorName(r.Context())
+		transition, err = s.Store.UpdateTaskWithRecurrence(r.Context(), id, sets, args, actor, actorID)
 	} else {
 		err = s.Store.UpdateTask(r.Context(), id, sets, args)
 	}
@@ -549,12 +550,6 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	// if status moved to done and task has recurring, spawn next occurrence
-	if statusToDone(sets, args, t.Status) && t.Recurring != "" {
-		if err := s.spawnNextRecurring(r.Context(), id, t); err != nil {
-			log.Printf("recurring spawn failed for task %d: %v", id, err)
-		}
 	}
 	eid := id
 	if err := s.Store.Audit(r.Context(), s.Auth.ActorName(r.Context()), "update_task", "task", &eid, body); err != nil {
@@ -569,12 +564,15 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				title = args[i].(string)
 			}
 			if set == "status" {
-				moved = statusChanged
+				moved = transition.StatusChanged
 			} else {
 				updated = true
 			}
 		}
 		actor := s.Auth.ActorName(r.Context())
+		if transition.Next != nil {
+			s.Bus.Publish(events.Event{Type: "task_created", ProjectID: transition.Next.ProjectID, TaskID: transition.Next.ID, Title: transition.Next.Title, Actor: actor})
+		}
 		if moved {
 			s.Bus.Publish(events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: title, Status: extractStatus(sets, args), Actor: actor})
 		}
@@ -660,23 +658,6 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// statusToDone checks if the update sets status to done.
-func statusToDone(sets []string, args []any, oldStatus string) bool {
-	if oldStatus == domain.StatusDone {
-		return false
-	}
-	for i, s := range sets {
-		if s == "status" {
-			if i < len(args) {
-				if st, ok := args[i].(string); ok {
-					return st == domain.StatusDone
-				}
-			}
-		}
-	}
-	return false
-}
-
 // extractStatus returns the new status value from the update sets/args.
 func extractStatus(sets []string, args []any) string {
 	for i, s := range sets {
@@ -689,17 +670,6 @@ func extractStatus(sets []string, args []any) string {
 	return ""
 }
 
-// spawnNextRecurring spawns the next occurrence of a recurring task.
-func (s *Server) spawnNextRecurring(ctx context.Context, taskID int64, orig *domain.Task) error {
-	d := toolbox.Deps{
-		Store:   s.Store,
-		ActorID: 0, // system, no user
-		Actor:   "scheduler",
-		Bus:     s.Bus,
-	}
-	_, err := toolbox.SpawnNextOccurrence(ctx, d, orig, true)
-	return err
-}
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
