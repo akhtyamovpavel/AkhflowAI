@@ -628,11 +628,12 @@ export default function App() {
   }, [token, project]);
 
   const loadDashboard = useCallback(async (signal: AbortSignal) => {
-    const [projectTasks, projectMembers] = await Promise.all([
+    const [projectTasks, projectMembers, projectEpics] = await Promise.all([
       api(`/api/projects/${project}/tasks`, { signal }, token),
       api(`/api/projects/${project}/members`, { signal }, token),
+      api(`/api/projects/${project}/epics`, { signal }, token),
     ]);
-    return { tasks: projectTasks ?? [], members: projectMembers ?? [] };
+    return { tasks: projectTasks ?? [], members: projectMembers ?? [], epics: projectEpics ?? [] };
   }, [token, project]);
 
   const loadChats = useCallback(async () => {
@@ -953,7 +954,7 @@ export default function App() {
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} />
+            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} epicsRevision={epics} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 
