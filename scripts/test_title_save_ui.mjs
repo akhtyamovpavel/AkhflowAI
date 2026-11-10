@@ -135,6 +135,28 @@ try {
   assert.equal(task.title, "Newer draft");
   assert.equal(writes.length, beforeRetry + 1, "blur and retry click duplicated the save");
 
+  mode = "reject";
+  await title.fill("Keep draft when closing");
+  await page.getByRole("button", { name: "Закрыть карточку задачи", exact: true }).click();
+  await saveError.waitFor();
+  assert.equal(await title.inputValue(), "Keep draft when closing", "close discarded failed title draft");
+  await page.locator(".fixed.inset-0.z-50 > .absolute.inset-0").click({ position: { x: 10, y: 10 } });
+  assert.equal(await title.inputValue(), "Keep draft when closing", "backdrop discarded failed title draft");
+  mode = "success";
+  await page.getByRole("button", { name: "Повторить сохранение", exact: true }).click();
+  await page.getByRole("button", { name: "Keep draft when closing", exact: true }).waitFor();
+
+  mode = "reject";
+  await title.fill("   ");
+  await description.click();
+  await saveError.waitFor();
+  await page.getByRole("button", { name: "Отменить изменение заголовка", exact: true }).click();
+  assert.equal(await title.inputValue(), "Keep draft when closing");
+  await page.getByRole("button", { name: "Закрыть карточку задачи", exact: true }).click();
+  await title.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Keep draft when closing", exact: true }).click();
+  mode = "success";
+
   failRefresh = true;
   await title.fill("Saved despite refresh failure");
   await description.click();

@@ -477,6 +477,8 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [blocks, setBlocks] = useState<Task[]>([]);
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [desc, setDesc] = useState("");
+  const description = useRef({ value: "", saved: "", version: 0 });
+  const [savingDescription, setSavingDescription] = useState(false);
   const [comment, setComment] = useState("");
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
@@ -486,6 +488,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const load = useCallback(async () => {
     if (!token) return;
     const titleRevision = titleDraft.current.revision;
+    const version = description.current.version;
     const data = await request(`/api/tasks/${taskId}`, {}, token);
     setTask(data.task);
     if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
@@ -496,7 +499,13 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     setDeps(data.dependencies ?? []);
     setBlocks(data.blocks ?? []);
     setHistory(data.history ?? []);
-    setDesc(data.task.description ?? "");
+    const draft = description.current;
+    if (draft.version === version && draft.value === draft.saved) {
+      const value = data.task.description ?? "";
+      draft.value = value;
+      draft.saved = value;
+      setDesc(value);
+    }
   }, [taskId, token, request]);
 
   useEffect(() => {
@@ -536,6 +545,28 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       titleSavePending.current = false;
       setSavingTitle(false);
     }
+  };
+
+  const saveDescription = async () => {
+    const value = description.current.value;
+    setSavingDescription(true);
+    try {
+      await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ description: value }) }, token);
+      description.current.saved = value;
+      description.current.version += 1;
+      await load();
+      onChanged();
+    } finally {
+      setSavingDescription(false);
+    }
+  };
+
+  const closeDetail = () => {
+    if (titleDraft.current.dirty || titleSavePending.current) {
+      setTitleError("Дождись сохранения заголовка или повтори попытку, прежде чем закрыть карточку.");
+      return;
+    }
+    onClose();
   };
 
   const addComment = async () => {
@@ -607,7 +638,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     members.find((m) => m.id === id)?.display_name || (id ? `user #${id}` : "—");
 
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
+    <div className="fixed inset-0 z-50" onClick={closeDetail}>
       <div className="absolute inset-0 bg-black/30" />
       <div
         className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto border-l bg-background shadow-xl"
@@ -615,7 +646,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       >
         <div className="flex items-center justify-between border-b p-4">
           <span className="text-sm text-muted-foreground">Задача #{task.id}</span>
-          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={closeDetail}>
             <X />
           </Button>
         </div>
@@ -646,6 +677,16 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
           {titleDirty && !savingTitle && (
             <Button size="sm" variant="outline" onClick={() => void saveTitle()}>
               {titleError ? "Повторить сохранение" : "Сохранить заголовок"}
+            </Button>
+          )}
+          {titleDirty && !savingTitle && (
+            <Button size="sm" variant="ghost" onClick={() => {
+              titleDraft.current = { value: task.title, revision: titleDraft.current.revision + 1, dirty: false };
+              setTitle(task.title);
+              setTitleDirty(false);
+              setTitleError("");
+            }}>
+              Отменить изменение заголовка
             </Button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -712,10 +753,13 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             <textarea
               className="min-h-24 w-full rounded-md border bg-transparent p-2 text-sm"
               value={desc}
-              onChange={(e) => setDesc(e.target.value)}
+              onChange={(e) => {
+                description.current.value = e.target.value;
+                setDesc(e.target.value);
+              }}
               placeholder="Описание задачи..."
             />
-            <Button size="sm" variant="outline" onClick={() => patch({ description: desc })}>Сохранить</Button>
+            <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription}>Сохранить</Button>
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>
