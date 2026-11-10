@@ -72,7 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/tasks/{id}/dependencies", s.projectAccess("task", false, s.listDependencies))
 	mux.Handle("POST /api/tasks/{id}/dependencies", s.projectAccess("task", true, s.addDependency))
 	mux.Handle("DELETE /api/tasks/{id}/dependencies/{dep}", s.projectAccess("task", true, s.deleteDependency))
-	mux.Handle("GET /api/projects/{slug}/events", s.projectAccess("project", false, s.sseEvents))
+	mux.Handle("GET /api/projects/{slug}/events", s.sseAccess(s.sseEvents))
 	mux.Handle("GET /api/projects/{slug}/agent/usage", s.projectAccess("project", false, s.getAgentUsage))
 	mux.Handle("POST /api/agent/chat", s.Auth.Middleware(http.HandlerFunc(s.agentChat)))
 	return mux
@@ -888,40 +888,13 @@ func (s *Server) deleteDependency(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sseEvents(w http.ResponseWriter, r *http.Request) {
-	// Auth: accept Bearer header OR ?token= query (EventSource cannot set headers)
-	tokenStr := r.URL.Query().Get("token")
-	var uid int64
-	if tokenStr != "" {
-		id, err := s.Auth.ParseToken(tokenStr)
-		if err == nil {
-			uid = id
-		}
-	}
-	if uid == 0 {
-		h := r.Header.Get("Authorization")
-		if strings.HasPrefix(h, "Bearer ") {
-			if id, err := s.Auth.ParseToken(strings.TrimPrefix(h, "Bearer ")); err == nil {
-				uid = id
-			}
-		}
-	}
-	if uid == 0 {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
 		http.Error(w, `{"error":"missing token"}`, http.StatusUnauthorized)
 		return
 	}
-	u, err := s.Store.UserByID(r.Context(), uid)
-	if err != nil || u == nil {
-		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
-		return
-	}
-	p, err := s.Store.ProjectBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil || p == nil {
-		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
-		return
-	}
-	member, err := s.Store.IsMember(r.Context(), p.ID, uid)
-	if err != nil || !member {
-		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+	p, ok := s.projectBySlug(w, r, uid)
+	if !ok {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
