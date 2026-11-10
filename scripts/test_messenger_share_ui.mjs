@@ -79,6 +79,16 @@ try {
   assert.equal(link.searchParams.size, 2);
   assert.equal(link.hash, "");
   assert.doesNotMatch(captured.url, /private-session-token|private-query|private-fragment/);
+  const credentialShare = await page.evaluate(async () => {
+    const { telegramShareURL } = await import("/src/lib/taskShare.ts");
+    const location = { href: "https://fixture-user:fixture-password@example.invalid/app/?private=query#fragment" };
+    return telegramShareURL(location, "alpha", 1, "title");
+  });
+  const credentialLink = new URL(new URL(credentialShare).searchParams.get("url"));
+  assert.equal(credentialLink.username, "");
+  assert.equal(credentialLink.password, "");
+  assert.equal(credentialLink.pathname, "/app/");
+  assert.doesNotMatch(credentialShare, /fixture-user|fixture-password|private|fragment/);
 
   const receiver = await browser.newContext();
   await configure(receiver);

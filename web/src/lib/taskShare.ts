@@ -12,6 +12,8 @@ export function readSharedTask(location: Location): SharedTask | null {
 
 export function telegramShareURL(location: Location, project: string, taskId: number, title: string): string {
   const taskURL = new URL(location.href);
+  taskURL.username = "";
+  taskURL.password = "";
   taskURL.search = "";
   taskURL.hash = "";
   taskURL.searchParams.set("task_project", project);
