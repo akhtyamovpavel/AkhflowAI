@@ -1225,10 +1225,9 @@ function ProjectWorkspace({
             <Button variant="ghost" size="sm" onClick={() => setAccessError(false)}>Закрыть</Button>
           </div>
         )}
-        {project && <ProjectMembers key={project} project={project} token={token} request={api} onMembersChanged={loadMembers} />}
+        {project && <ProjectMembers project={project} token={token} request={api} onMembersChanged={loadMembers} />}
         {project && (
           <QuickSearch
-            key={project}
             tasks={tasksProject === project ? tasks : []}
             epics={epicsProject === project ? epics : []}
             ready={tasksProject === project && epicsProject === project}
@@ -1256,7 +1255,6 @@ function ProjectWorkspace({
         )}
         {project && (
           <DeadlineReminders
-            key={`${token}:${project}`}
             project={project}
             fetchTasks={fetchDeadlineTasks}
             onOpen={setOpenTaskId}
@@ -1318,7 +1316,7 @@ function ProjectWorkspace({
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard key={project} load={loadDashboard} revision={tasks} epicsRevision={epics} />
+            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 
