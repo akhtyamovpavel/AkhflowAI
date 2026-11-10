@@ -241,6 +241,44 @@ func TestRecurringCompletionAtomicity(t *testing.T) {
 		t.Errorf("retry after failure: %d tasks, want 2", got)
 	}
 
+	for i := 0; i < 12; i++ {
+		title := fmt.Sprintf("Scheduler race %d", i)
+		due := time.Now().AddDate(0, 0, -3)
+		master, err := db.CreateTask(ctx, domain.Task{ProjectID: project, AuthorID: owner, Title: title, Status: "todo", Priority: "medium", DueDate: &due, Recurring: "daily"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		go func() {
+			<-start
+			_, err := db.CreateScheduledOccurrence(ctx, master, time.Now())
+			results <- err
+		}()
+		go func() {
+			<-start
+			results <- patch(master, `{"status":"done"}`)
+		}()
+		close(start)
+		for j := 0; j < 2; j++ {
+			if err := <-results; err != nil {
+				t.Fatal(err)
+			}
+		}
+		var masters, occurrences int
+		err = inspect.QueryRow(ctx, `SELECT count(*) FILTER (WHERE recurring<>''), count(*) FILTER (WHERE recurring='') FROM tasks WHERE title=$1`, title).Scan(&masters, &occurrences)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if masters != 2 || occurrences > 1 {
+			t.Errorf("scheduler and completion race: recurring=%d one-off=%d", masters, occurrences)
+		}
+		stored, err := db.TaskByID(ctx, master)
+		if err != nil || stored == nil || stored.Status != "done" {
+			t.Fatalf("master after scheduler race: %+v, %v", stored, err)
+		}
+	}
+
 	legacy := create("Legacy")
 	legacyNext := create("Legacy")
 	if err := db.Audit(ctx, "owner@example.invalid", "recur_task", "task", &legacyNext, map[string]any{"from": legacy}); err != nil {
