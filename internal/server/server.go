@@ -921,7 +921,6 @@ func (s *Server) sseEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	sub := s.Bus.Subscribe(p.ID)
 	defer s.Bus.Unsubscribe(sub)
-	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 	heartbeat := time.NewTicker(25 * time.Second)
 	defer heartbeat.Stop()
