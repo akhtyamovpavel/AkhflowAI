@@ -651,7 +651,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
               </div>
             )}
           </div>
-          <TaskAttachments taskId={taskId} token={token} apiBase={API} />
+          <TaskAttachments taskId={taskId} token={token} apiBase={API} project={project} />
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>
@@ -1350,7 +1350,7 @@ function ProjectWorkspace({
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} />
+            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} project={project} token={token} request={api} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 

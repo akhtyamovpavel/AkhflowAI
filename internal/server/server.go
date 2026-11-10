@@ -46,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{slug}/tasks", s.projectAccess("project", false, s.listTasks))
 	mux.Handle("GET /api/projects/{slug}/members", s.projectAccess("project", false, s.listMembers))
 	mux.Handle("GET /api/projects/{slug}/role", s.projectAccess("project", false, s.getProjectRole))
+	mux.Handle("GET /api/projects/{slug}/dashboard-preferences", s.projectAccess("project", false, s.dashboardPreferences))
+	mux.Handle("PUT /api/projects/{slug}/dashboard-preferences", s.projectAccess("project", false, s.dashboardPreferences))
 	mux.Handle("PUT /api/projects/{slug}/members", s.projectAccess("project", false, s.setMemberRole))
 	mux.Handle("POST /api/projects/{slug}/tasks", s.projectAccess("project", true, s.createTask))
 	mux.Handle("POST /api/projects/{slug}/imports/akhcheck", s.projectAccess("project", true, s.importAkhcheckCourse))
