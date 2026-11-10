@@ -56,7 +56,15 @@ func RecurrenceStep(spec string) (func(time.Time) time.Time, bool) {
 	case "weekly":
 		return func(t time.Time) time.Time { return t.AddDate(0, 0, 7) }, true
 	case "monthly":
-		return func(t time.Time) time.Time { return t.AddDate(0, 1, 0) }, true
+		return func(t time.Time) time.Time {
+			first := time.Date(t.Year(), t.Month()+1, 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+			lastDay := first.AddDate(0, 1, -1).Day()
+			day := t.Day()
+			if day > lastDay {
+				day = lastDay
+			}
+			return time.Date(first.Year(), first.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+		}, true
 	}
 	return nil, false
 }

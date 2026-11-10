@@ -61,6 +61,7 @@ func newSchedulerFixture(t *testing.T) schedulerFixture {
 	}
 	query := parsed.Query()
 	query.Set("search_path", schema)
+	query.Set("timezone", "UTC")
 	parsed.RawQuery = query.Encode()
 	scoped := parsed.String()
 	db, err := store.New(scoped)
