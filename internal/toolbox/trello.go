@@ -55,5 +55,8 @@ func importTrello(ctx context.Context, d Deps, args json.RawMessage) (Result, er
 		return Result{}, errors.New("не удалось сохранить импорт Trello")
 	}
 	message := fmt.Sprintf("Импортировано задач: %d, пропущено существующих: %d, создано эпиков: %d", imported.TasksCreated, imported.TasksSkipped, imported.ListsCreated)
+	if imported.TasksUngrouped > 0 {
+		message += fmt.Sprintf(", без эпика: %d", imported.TasksUngrouped)
+	}
 	return Result{Ok: true, Message: message, Data: imported}, nil
 }

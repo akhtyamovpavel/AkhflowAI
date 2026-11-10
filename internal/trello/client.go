@@ -9,11 +9,16 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var boardIDPattern = regexp.MustCompile(`^[a-zA-Z0-9]{8,24}$`)
+var cardIDPattern = regexp.MustCompile(`^[a-f0-9]{24}$`)
+
+const cardPageSize = 1000
+const maxCardPages = 10000
 
 type List struct {
 	ID   string `json:"id"`
@@ -74,10 +79,64 @@ func (c *Client) FetchBoard(ctx context.Context, boardID string) (*Board, error)
 	if err := c.get(ctx, base+"/lists?filter=open&fields=id,name", &board.Lists); err != nil {
 		return nil, err
 	}
-	if err := c.get(ctx, base+"/cards?filter=open&fields=id,idList,name,desc,due", &board.Cards); err != nil {
+	cards, err := c.fetchCards(ctx, base)
+	if err != nil {
 		return nil, err
 	}
+	board.Cards = cards
 	return board, nil
+}
+
+// Trello's before cursor is a creation timestamp, with only second precision
+// in card IDs. Overlap the boundary second so cards created together are not
+// dropped; reject a page that cannot advance rather than return partial data.
+func (c *Client) fetchCards(ctx context.Context, base string) ([]Card, error) {
+	cards := []Card{}
+	seen := map[string]bool{}
+	var before time.Time
+	for pageNumber := 0; pageNumber < maxCardPages; pageNumber++ {
+		query := url.Values{"filter": {"open"}, "fields": {"id,idList,name,desc,due"}, "limit": {strconv.Itoa(cardPageSize)}, "sort": {"-id"}}
+		if !before.IsZero() {
+			query.Set("before", before.Format(time.RFC3339))
+		}
+		var page []Card
+		if err := c.get(ctx, base+"/cards?"+query.Encode(), &page); err != nil {
+			return nil, err
+		}
+		if len(page) > cardPageSize {
+			return nil, errors.New("Trello вернул слишком много карточек на странице")
+		}
+		// Short final pages cannot require another cursor; existing tests and
+		// clients can therefore keep using synthetic IDs for small boards.
+		if len(page) < cardPageSize && before.IsZero() {
+			return page, nil
+		}
+		var oldest time.Time
+		for index, card := range page {
+			if !cardIDPattern.MatchString(card.ID) || (index > 0 && page[index-1].ID <= card.ID) {
+				return nil, errors.New("Trello вернул некорректный порядок карточек")
+			}
+			seconds, _ := strconv.ParseInt(card.ID[:8], 16, 64)
+			created := time.Unix(seconds, 0).UTC()
+			if !before.IsZero() && !created.Before(before) {
+				return nil, errors.New("Trello вернул некорректную страницу карточек")
+			}
+			oldest = created
+			if !seen[card.ID] {
+				seen[card.ID] = true
+				cards = append(cards, card)
+			}
+		}
+		if len(page) < cardPageSize {
+			return cards, nil
+		}
+		next := oldest.Add(time.Second)
+		if !before.IsZero() && !next.Before(before) {
+			return nil, errors.New("Trello не позволяет продолжить загрузку карточек")
+		}
+		before = next
+	}
+	return nil, errors.New("превышен предел страниц Trello")
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
