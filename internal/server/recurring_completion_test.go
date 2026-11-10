@@ -190,6 +190,31 @@ func TestRecurringCompletionAtomicity(t *testing.T) {
 	if nextEpic != epic || recurrence != "weekly" || due.Format(time.DateOnly) != "2026-11-17" {
 		t.Errorf("next occurrence did not preserve mixed update: epic=%d recurrence=%q due=%s", nextEpic, recurrence, due)
 	}
+	for _, method := range []string{"REST", "MCP"} {
+		title := "Monthly " + method
+		monthly := create(title)
+		january := time.Date(2028, time.January, 31, 0, 0, 0, 0, time.UTC)
+		err := db.UpdateTask(ctx, monthly, []string{"due_date", "recurring"}, []any{january, "monthly"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if method == "REST" {
+			err = patch(monthly, `{"status":"done"}`)
+		} else {
+			err = move(monthly)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var nextDue time.Time
+		err = inspect.QueryRow(ctx, `SELECT due_date FROM tasks WHERE title=$1 AND id<>$2`, title, monthly).Scan(&nextDue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if nextDue.Format(time.DateOnly) != "2028-02-29" {
+			t.Errorf("%s monthly completion due = %s, want 2028-02-29", method, nextDue.Format(time.DateOnly))
+		}
+	}
 
 	failure := create("Failure")
 	if err := db.SetEmailNotifications(ctx, owner, true); err != nil {
