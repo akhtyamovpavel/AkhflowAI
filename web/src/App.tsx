@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
 import { TaskAttachments } from "@/components/TaskAttachments";
@@ -174,6 +175,9 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
     if (res.status === 401 && token) {
       localStorage.removeItem("akhflow.token");
       window.location.reload();
+    }
+    if (res.status === 403 && opts.method && !["GET", "HEAD"].includes(opts.method.toUpperCase())) {
+      window.dispatchEvent(new Event("akhflow:write-forbidden"));
     }
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
@@ -745,6 +749,12 @@ function ProjectWorkspace({
   view: WorkspaceView;
   setView: (view: WorkspaceView) => void;
 }) {
+  const [accessError, setAccessError] = useState(false);
+  useEffect(() => {
+    const showAccessError = () => setAccessError(true);
+    window.addEventListener("akhflow:write-forbidden", showAccessError);
+    return () => window.removeEventListener("akhflow:write-forbidden", showAccessError);
+  }, []);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -1194,6 +1204,13 @@ function ProjectWorkspace({
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {accessError && (
+          <div role="alert" className="rounded-md border border-destructive p-3 text-sm">
+            Недостаточно прав для выполнения действия. Обратись к владельцу проекта.
+            <Button variant="ghost" size="sm" onClick={() => setAccessError(false)}>Закрыть</Button>
+          </div>
+        )}
+        {project && <ProjectMembers key={project} project={project} token={token} request={api} />}
         {project && (
           <QuickSearch
             key={project}
