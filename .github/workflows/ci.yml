@@ -39,6 +39,7 @@ jobs:
           AKHFLOW_NATURAL_LANGUAGE_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_MCP_EVENTS_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_RECURRING_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
+          AKHFLOW_API_EVENTS_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
 
   web:
     runs-on: ubuntu-latest
