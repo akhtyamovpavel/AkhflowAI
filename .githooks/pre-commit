@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Enable for this checkout: git config core.hooksPath .githooks
+# Requires Python 3 and Gitleaks (PATH or bin/security-tools/gitleaks).
+set -euo pipefail
+
+repository_root=$(git rev-parse --show-toplevel)
+cd "$repository_root"
+exec "${PYTHON_BIN:-python3}" scripts/check_publish.py --staged

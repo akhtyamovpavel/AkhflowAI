@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: akhflow
+      POSTGRES_USER: akhflow
+      POSTGRES_PASSWORD: akhflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akhflow -d akhflow"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    command: sh -c "akhflow migrate && exec akhflow serve api"
+    environment:
+      DATABASE_URL: postgres://akhflow:akhflow@db:5432/akhflow?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      AGENT_MODEL: ${AGENT_MODEL:-qwen3.5:9b}
+      API_PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build: ./web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

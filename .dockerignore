@@ -1,0 +1,8 @@
+bin/
+web/
+.git/
+.env
+.env-cli
+.env.example
+.token
+*.log

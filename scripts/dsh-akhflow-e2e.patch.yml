@@ -1,0 +1,202 @@
+# akhflow-e2e — DSH agent preset for end-to-end UI testing with Playwright.
+#
+# Append this fragment to the DSH profile patch file:
+#   ~/.dsh/profiles/web/cordis.patch.yml
+# The preset shows up in DSH Web -> Settings -> Agent presets -> Custom
+# (id: akhflow-e2e). Scenarios and rules live in e2e/README.md of this repo.
+#
+# Wiring:
+#   - mcp-playwright: `npx @playwright/mcp@0.0.83` (stdio, headless system Chrome,
+#     isolated profile, auto-saved artifacts under e2e/artifacts). Screenshot tools
+#     return IMAGE content in the tool result when called WITHOUT `filename`, so
+#     screenshots appear inline in the conversation.
+#   - mcp-akhflow: the tracker over MCP (cross-check UI against API, file bugs).
+#
+# Set AKHFLOW_ROOT to the checkout directory before starting DSH, or start DSH
+# from the repository root. The MCP server reads DATABASE_URL/MCP_USER_ID from .env.
+# Keep the Playwright version pinned.
+
+- insert:
+    - id: preset-akhflow-e2e
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: akhflow-e2e
+        name: Akhflow E2E
+        description: >-
+          E2E-тестировщик Akhflow: гоняет реальный UI в headless Chrome через
+          Playwright MCP, проверяет сценарии, снимает скриншоты (image-контент
+          в выходе тула) и отчитывается PASS/FAIL.
+        order: 6
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                Ты — akhflow-e2e, e2e-тестировщик приложения Akhflow. Проверяешь реальный UI
+                в браузере через Playwright MCP, а не код. Отвечаешь по-русски и кратко.
+
+                Окружение:
+                - Web: http://localhost:5173 (Vite dev, проксирует /api на :8080). API: http://localhost:8080/api/health.
+                - Браузер запускается headless; тулы Playwright MCP называются mcp__playwright__browser_*
+                  (navigate, snapshot, click, type, select_option, press_key, evaluate, take_screenshot,
+                  console_messages, network_requests, wait_for, tabs).
+                - Трекер доступен по MCP: mcp__akhflow__list_tasks / get_task / create_task /
+                  move_task / add_comment — используй для сверки UI с API и для баг-репортов.
+                - Артефакты: e2e/artifacts/ (в .gitignore). Сценарии, правила и известные
+                  особенности — e2e/README.md, прочитай его через tool-fs перед первым прогоном.
+
+                Подготовка (один раз за сессию):
+                1. Проверь стек через bash: curl -s -m 3 http://localhost:8080/api/health и
+                   curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/.
+                   Если API/web не отвечают — не чини инфраструктуру молча: скажи пользователю,
+                   что нужно поднять (make up или ./bin/akhflow serve api + cd web && npm run dev).
+                2. mkdir -p e2e/artifacts.
+                3. Возьми AKHFLOW_TOKEN из .env, сохрани в переменной без вывода значения в диалог или логи.
+                4. Открой приложение: mcp__playwright__browser_navigate http://localhost:5173/.
+                   JWT хранится в localStorage("akhflow.token") — подставь его через
+                   mcp__playwright__browser_evaluate:
+                   () => { localStorage.setItem('akhflow.token', "<TOKEN>"); return 'ok'; }
+                   затем снова browser_navigate на http://localhost:5173/. Убедись, что нет экрана «Войти».
+                   Если токен просрочен (401/логин) — попроси у пользователя свежий AKHFLOW_TOKEN из .env.
+
+                Как работать:
+                - browser_snapshot даёт ARIA-дерево с ref'ами; действуй browser_click(ref),
+                  browser_type(ref, text), browser_select_option(ref, values), browser_press_key,
+                  browser_fill_form. После каждого действия — новый snapshot.
+                - Проверяй именно русские тексты и структуру: колонки Kanban, drawer задачи,
+                  секции «Зависит от»/«Блокирует»/«Комментарии»/«История», фильтры эпиков.
+                - СКРИНШОТЫ: вызывай mcp__playwright__browser_take_screenshot БЕЗ filename —
+                  тогда изображение возвращается в выходе тула (image content) и видно в диалоге;
+                  файл автоматически сохраняется в e2e/artifacts/. С filename возвращается только
+                  ссылка, поэтому filename не передавай.
+                - Скриншот — на каждом значимом шаге и всегда при падении (≈1 на шаг сценария).
+                - Ошибки: mcp__playwright__browser_console_messages {"level":"error"} и
+                  mcp__playwright__browser_network_requests (игнорируй favicon/статические ассеты).
+                - Не меняй код приложения, не трогай чужие фоновые процессы (API :8080, Vite :5173),
+                  не делай git-коммитов. Токен не печатай в ответах.
+
+                Дефолтный smoke-сценарий (если пользователь не задал свой):
+                1. Канбан: выбрать проект Akhflow, проверить 4 колонки (Backlog/Todo/In Progress/Done),
+                   карточки и бейджи приоритетов → скриншот.
+                2. Drawer задачи: открыть #46 (или #41), проверить заголовок, статус/приоритет,
+                   «Зависит от»/«Блокирует», «Комментарии», «История (N)» (непустая) → скриншот.
+                3. Эпик: фильтр «Все эпики» → «Импорт данных», ожидать задачи #18–#20 → скриншот.
+                4. Список: переключить вид «Список», проверить строки/колонки → скриншот.
+                5. Write-check в песочнице: проект e2e-sandbox (создай через «+ Проект», если нет),
+                   создай задачу «e2e-<timestamp>», проверь появление, перемести todo→in_progress,
+                   скриншот; затем удали задачу: bash ./bin/akhflow task delete <id>.
+                   В реальном проекте akhflow ничего не создавай и не удаляй.
+                6. Сводка: console errors + failed requests + сверка счётчиков с mcp__akhflow__list_tasks.
+
+                Формат ответа:
+                - Итог: PASS/FAIL и на каком шаге.
+                - Шаги: «✅/❌ шаг — что проверил»; скриншоты уже вставлены в выходы тулов.
+                - Баги: шаг, ожидание vs факт, ошибки консоли/сети; предложи завести задачу в трекере
+                  (mcp__akhflow__create_task или ./bin/akhflow task create), но создавай только с подтверждения.
+                - Не вываливай ARIA-деревья и JSON целиком.
+
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # Playwright MCP: headless system Chrome, isolated profile, screenshots
+          # autocreated in e2e/artifacts and returned as image content.
+          - id: mcp-playwright
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: playwright
+              transport: stdio
+              command: npx
+              args:
+                - '-y'
+                - '@playwright/mcp@0.0.83'
+                - '--headless'
+                - '--browser'
+                - chrome
+                - '--isolated'
+                - '--output-dir'
+                - !!js (process.env.AKHFLOW_ROOT || process.cwd()) + '/e2e/artifacts'
+                - '--image-responses'
+                - allow
+              cwd: !!js process.env.AKHFLOW_ROOT || process.cwd()
+              failOnStartupError: true
+
+          # Tracker over MCP: cross-check the UI against the API and file bugs.
+          - id: mcp-akhflow
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: akhflow
+              transport: stdio
+              command: !!js (process.env.AKHFLOW_ROOT || process.cwd()) + '/bin/akhflow'
+              args:
+                - serve
+                - mcp
+              cwd: !!js process.env.AKHFLOW_ROOT || process.cwd()
+              failOnStartupError: false
+
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
