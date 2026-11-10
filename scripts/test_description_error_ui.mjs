@@ -17,10 +17,12 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
   stdio: "ignore",
 });
 const task = { id: 1, title: "Задача А", description: "Исходное", status: "backlog", priority: "medium" };
+const second = { id: 2, title: "Задача Б", description: "Другая", status: "todo", priority: "medium" };
 let mode = "http-error";
 let releaseSave;
 let saveStarted;
 let browser;
+let failTaskList = false;
 const pageErrors = [];
 
 try {
@@ -50,7 +52,12 @@ try {
     if (path === "/api/projects") {
       data = [{ id: 1, slug: "alpha", name: "Альфа" }];
     } else if (path === "/api/projects/alpha/tasks") {
-      data = [task];
+      if (failTaskList) {
+        failTaskList = false;
+        await route.fulfill({ status: 500, json: { error: "failure" } });
+        return;
+      }
+      data = [task, second];
     } else if (path === "/api/tasks/1" && request.method() === "PATCH") {
       if (mode === "http-error") {
         await route.fulfill({ status: 500, json: { error: "failure" } });
@@ -60,9 +67,14 @@ try {
         await route.abort();
         return;
       }
-      if (mode === "delayed") {
+      if (mode === "delayed" || mode === "delayed-fail") {
+        const failing = mode === "delayed-fail";
         saveStarted();
         await new Promise((resolve) => { releaseSave = resolve; });
+        if (failing) {
+          await route.fulfill({ status: 500, json: { error: "failure" } });
+          return;
+        }
       }
       Object.assign(task, request.postDataJSON());
     } else if (path === "/api/tasks/1") {
@@ -70,7 +82,9 @@ try {
         await route.fulfill({ status: 500, json: { error: "failure" } });
         return;
       }
-      data = { task, dependencies: [], comments: [], blocks: [], history: [] };
+      data = { task, dependencies: [second], comments: [], blocks: [], history: [] };
+    } else if (path === "/api/tasks/2") {
+      data = { task: second, dependencies: [], comments: [], blocks: [], history: [] };
     }
     await route.fulfill({ status: 200, json: data }).catch(() => {});
   });
@@ -87,6 +101,22 @@ try {
   await save.click();
   await page.getByRole("alert").getByText("Не удалось сохранить описание. Попробуй ещё раз.").waitFor();
   assert.equal(await description.inputValue(), "Черновик");
+  mode = "delayed-fail";
+  const failureStarted = new Promise((resolve) => { saveStarted = resolve; });
+  await save.click();
+  await failureStarted;
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "pending save allowed closing");
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "pending save allowed navigation");
+  releaseSave();
+  await page.getByRole("alert").getByText("Не удалось сохранить описание. Попробуй ещё раз.").waitFor();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "cancelled close lost draft");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "cancelled navigation lost draft");
   mode = "delayed";
   const started = new Promise((resolve) => { saveStarted = resolve; });
   await save.click();
@@ -109,9 +139,20 @@ try {
   await description.fill("Сохранено до ошибки обновления");
   mode = "refresh-error";
   await save.click();
-  await page.getByRole("alert").getByText("Описание сохранено, но обновить карточку не удалось.").waitFor();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Обнови страницу.").waitFor();
   assert.equal(task.description, "Сохранено до ошибки обновления");
   assert.equal(await description.inputValue(), "Сохранено до ошибки обновления");
+  mode = "success";
+  await description.fill("Список недоступен");
+  failTaskList = true;
+  await save.click();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Обнови страницу.").waitFor();
+  assert.equal(task.description, "Список недоступен");
+  await description.fill("Несохранённый текст");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  await page.getByText("Задача #2", { exact: true }).waitFor();
+  assert.equal(await description.inputValue(), "Другая");
   assert.deepEqual(pageErrors, []);
   console.log("PASS: description errors preserve draft, retry succeeds and refresh failure is distinct");
 } finally {

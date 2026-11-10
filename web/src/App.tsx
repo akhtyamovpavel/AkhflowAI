@@ -462,7 +462,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   recommendationReady: boolean;
   onOpen: (id: number) => void;
   onClose: () => void;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   request: ApiRequest;
 }) {
   const [task, setTask] = useState<Task | null>(null);
@@ -521,11 +521,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ description: value }) }, token);
       description.current.saved = value;
       description.current.version += 1;
-      onChanged();
-      try {
-        await load();
-      } catch {
-        setDescriptionError("Описание сохранено, но обновить карточку не удалось.");
+      const updates = await Promise.allSettled([load(), Promise.resolve().then(onChanged)]);
+      if (updates.some((result) => result.status === "rejected")) {
+        setDescriptionError("Описание сохранено, но обновить данные не удалось. Обнови страницу.");
       }
     } catch {
       setDescriptionError("Не удалось сохранить описание. Попробуй ещё раз.");
@@ -533,6 +531,22 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       descriptionSaving.current = false;
       setSavingDescription(false);
     }
+  };
+
+  const canLeave = () => {
+    if (descriptionSaving.current) return false;
+    if (description.current.value !== description.current.saved) {
+      return window.confirm("Описание не сохранено. Закрыть карточку и потерять изменения?");
+    }
+    return true;
+  };
+
+  const closeDetail = () => {
+    if (canLeave()) onClose();
+  };
+
+  const openDetail = (id: number) => {
+    if (canLeave()) onOpen(id);
   };
 
   const addComment = async () => {
@@ -572,7 +586,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const depRow = (d: Task, direction: "depends" | "blocks") => (
     <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border p-2">
-      <button className="text-left text-sm hover:underline" onClick={() => onOpen(d.id)}>
+      <button className="text-left text-sm hover:underline" onClick={() => openDetail(d.id)}>
         #{d.id} {d.title}
       </button>
       <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded ${d.status === "done" ? "bg-secondary text-secondary-foreground" : "bg-amber-500/10 text-amber-600"}`}>
@@ -604,7 +618,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     members.find((m) => m.id === id)?.display_name || (id ? `user #${id}` : "—");
 
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
+    <div className="fixed inset-0 z-50" onClick={closeDetail}>
       <div className="absolute inset-0 bg-black/30" />
       <div
         className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto border-l bg-background shadow-xl"
@@ -612,7 +626,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       >
         <div className="flex items-center justify-between border-b p-4">
           <span className="text-sm text-muted-foreground">Задача #{task.id}</span>
-          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+          <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={closeDetail}>
             <X />
           </Button>
         </div>
