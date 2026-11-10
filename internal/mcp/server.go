@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"akhflow.ai/akhflow/internal/events"
 	"akhflow.ai/akhflow/internal/store"
 	"akhflow.ai/akhflow/internal/toolbox"
 )
@@ -20,6 +21,7 @@ type Server struct {
 	Actor   string
 	Version string
 	APIKey  string
+	Bus     *events.Bus
 }
 
 type RPCRequest struct {
@@ -77,6 +79,7 @@ func (s *Server) handle(req *RPCRequest) (*RPCResponse, error) {
 			Store:   s.Store,
 			ActorID: s.UserID,
 			Actor:   s.Actor,
+			Bus:     s.Bus,
 		}, params.Arguments)
 		if err != nil {
 			res = toolbox.Result{Ok: false, Message: err.Error()}
