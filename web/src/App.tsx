@@ -1172,6 +1172,7 @@ function ProjectWorkspace({
 
       {openTaskId && (
         <TaskDetail
+          key={openTaskId}
           taskId={openTaskId}
           epics={epics}
           members={members}
