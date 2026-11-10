@@ -5,12 +5,13 @@ import { deadlineMessage, reminderKey, upcomingDeadlines } from "@/lib/deadlines
 import type { DeadlineTask } from "@/lib/deadlines";
 
 type Props = {
+  userId: string | null;
   project: string;
   fetchTasks: (signal: AbortSignal) => Promise<DeadlineTask[]>;
   onOpen: (id: number) => void;
 };
 
-export function DeadlineReminders({ project, fetchTasks, onOpen }: Props) {
+export function DeadlineReminders({ userId, project, fetchTasks, onOpen }: Props) {
   const supported = "Notification" in window && window.isSecureContext;
   const [permission, setPermission] = useState<NotificationPermission>(
     supported ? Notification.permission : "denied",
@@ -71,11 +72,11 @@ export function DeadlineReminders({ project, fetchTasks, onOpen }: Props) {
   }, [fetchTasks, supported]);
 
   useEffect(() => {
-    if (!supported || permission !== "granted" || Notification.permission !== "granted") {
+    if (!userId || !supported || permission !== "granted" || Notification.permission !== "granted") {
       return;
     }
     for (const task of upcomingDeadlines(tasks)) {
-      const key = reminderKey(project, task);
+      const key = reminderKey(userId, project, task);
       let delivered = sent.current.has(key);
       try {
         delivered = delivered || localStorage.getItem(key) === "sent";
@@ -107,7 +108,7 @@ export function DeadlineReminders({ project, fetchTasks, onOpen }: Props) {
         break;
       }
     }
-  }, [tasks, permission, project, onOpen, supported]);
+  }, [tasks, permission, userId, project, onOpen, supported]);
 
   const enable = async () => {
     try {
