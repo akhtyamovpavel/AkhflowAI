@@ -48,6 +48,13 @@ func TestDashboardPreferences(t *testing.T) {
 	if err = db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var migrations int
+	if err = admin.QueryRow(ctx, "SELECT count(*) FROM "+schema+".schema_migrations WHERE name IN ('010_attachment_content.sql', '015_dashboard_preferences.sql')").Scan(&migrations); err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 2 {
+		t.Fatalf("attachment and dashboard migrations: got %d, want 2", migrations)
+	}
 	createUser := func(email string) int64 {
 		t.Helper()
 		id, err := db.CreateUser(ctx, email, email, "hash")
