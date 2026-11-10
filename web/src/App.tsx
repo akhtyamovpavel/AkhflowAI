@@ -346,6 +346,8 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
   const [desc, setDesc] = useState("");
   const [comment, setComment] = useState("");
   const [newDep, setNewDep] = useState("");
+  const [dependencyError, setDependencyError] = useState("");
+  const [removingDependency, setRemovingDependency] = useState(false);
   const token = localStorage.getItem("akhflow.token");
 
   const load = useCallback(async () => {
@@ -392,13 +394,21 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
     onChanged();
   };
 
-  const removeDep = async (depId: number) => {
-    await api(`/api/tasks/${taskId}/dependencies/${depId}`, { method: "DELETE" }, token);
-    await load();
-    onChanged();
+  const removeDep = async (sourceId: number, depId: number) => {
+    setDependencyError("");
+    setRemovingDependency(true);
+    try {
+      await api(`/api/tasks/${sourceId}/dependencies/${depId}`, { method: "DELETE" }, token);
+      await load();
+      onChanged();
+    } catch {
+      setDependencyError("Не удалось удалить связь. Обнови карточку и попробуй снова.");
+    } finally {
+      setRemovingDependency(false);
+    }
   };
 
-  const depRow = (d: Task) => (
+  const depRow = (d: Task, direction: "depends" | "blocks") => (
     <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border p-2">
       <button className="text-left text-sm hover:underline" onClick={() => onOpen(d.id)}>
         #{d.id} {d.title}
@@ -410,7 +420,14 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
         size="sm"
         variant="ghost"
         aria-label={`Удалить связь с задачей #${d.id}: ${d.title}`}
-        onClick={() => removeDep(d.id)}
+        disabled={removingDependency}
+        onClick={() => {
+          if (direction === "depends") {
+            void removeDep(taskId, d.id);
+          } else {
+            void removeDep(d.id, taskId);
+          }
+        }}
       >
         <X />
       </Button>
@@ -513,9 +530,10 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>
+            {dependencyError && <p role="alert" className="text-sm text-destructive">{dependencyError}</p>}
             <div className="space-y-1">
               {deps.length === 0 && <p className="text-sm text-muted-foreground">Пока пусто</p>}
-              {deps.map(depRow)}
+              {deps.map((dependency) => depRow(dependency, "depends"))}
             </div>
             {depOptions.length > 0 && (
               <div className="mt-2 flex gap-2">
@@ -536,7 +554,7 @@ function TaskDetail({ taskId, epics, members, tasks, onOpen, onClose, onChanged 
           {blocks.length > 0 && (
             <div>
               <div className="mb-1 text-xs text-muted-foreground">Блокирует ({blocks.length})</div>
-              <div className="space-y-1">{blocks.map(depRow)}</div>
+              <div className="space-y-1">{blocks.map((dependency) => depRow(dependency, "blocks"))}</div>
             </div>
           )}
           <div>
