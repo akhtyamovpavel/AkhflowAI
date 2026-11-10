@@ -966,6 +966,7 @@ func (s *Server) agentChat(w http.ResponseWriter, r *http.Request) {
 		Client: s.LLM,
 		Deps: toolbox.Deps{
 			Store:   s.Store,
+			Bus:     s.Bus,
 			ActorID: uid,
 			Actor:   u.Email,
 		},
@@ -1118,6 +1119,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		Client: s.LLM,
 		Deps: toolbox.Deps{
 			Store:   s.Store,
+			Bus:     s.Bus,
 			ActorID: uid,
 			Actor:   u.Email,
 		},
