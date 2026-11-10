@@ -252,16 +252,36 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
   const [err, setErr] = useState("");
+  const loginRequest = useRef(0);
+  useEffect(() => {
+    const invalidateLogin = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === "akhflow.token" || event.key === null)) {
+        loginRequest.current++;
+      }
+    };
+    window.addEventListener("storage", invalidateLogin);
+    return () => {
+      loginRequest.current++;
+      window.removeEventListener("storage", invalidateLogin);
+    };
+  }, []);
   const submit = async () => {
+    const request = ++loginRequest.current;
+    const initialToken = localStorage.getItem("akhflow.token");
+    const isCurrent = () => request === loginRequest.current && localStorage.getItem("akhflow.token") === initialToken;
     setErr("");
     try {
       const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const body: any = { email, password };
       if (mode === "register") body.display_name = name || email;
       const data = await api(path, { method: "POST", body: JSON.stringify(body) });
-      onLogin(data.token);
+      if (isCurrent()) {
+        onLogin(data.token);
+      }
     } catch (e: any) {
-      setErr(e.message);
+      if (isCurrent()) {
+        setErr(e.message);
+      }
     }
   };
   return (
