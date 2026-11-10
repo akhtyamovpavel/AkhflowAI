@@ -14,6 +14,8 @@ import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
 import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
+import { readSharedTask, telegramShareURL } from "@/lib/taskShare";
+import type { SharedTask } from "@/lib/taskShare";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -415,8 +417,9 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
-function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
+function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
   taskId: number;
+  project: string;
   epics: Epic[];
   members: Member[];
   tasks: Task[];
@@ -542,6 +545,12 @@ function TaskDetail({ taskId, epics, members, tasks, recommendationReady, onOpen
           </Button>
         </div>
         <div className="space-y-4 p-4">
+          <Button variant="outline" size="sm" onClick={() => {
+            const link = telegramShareURL(window.location, project, task.id, task.title);
+            window.open(link, "_blank", "noopener,noreferrer");
+          }}>
+            Обсудить в Telegram
+          </Button>
           <Input
             value={task.title}
             onChange={(e) => setTask({ ...task, title: e.target.value })}
@@ -705,22 +714,35 @@ function AccountWorkspace({ token, saveToken }: {
   const [view, setView] = useState<"kanban" | "list" | "dashboard" | "agent">("kanban");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
+  const [sharedTask, setSharedTask] = useState<SharedTask | null>(() => readSharedTask(window.location));
+
+  const consumeSharedTask = useCallback(() => {
+    setSharedTask(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("task_project");
+    url.searchParams.delete("task");
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
     const data: Project[] = (await api("/api/projects", {}, token)) ?? [];
     setProjects(data);
+    if (sharedTask && !data.some((item) => item.slug === sharedTask.project)) {
+      consumeSharedTask();
+    }
     const saved = localStorage.getItem("akhflow.project");
     if (data.length > 0) {
       setProject((p) => {
         if (p && data.some((x) => x.slug === p)) return p;
+        if (sharedTask && data.some((x) => x.slug === sharedTask.project)) return sharedTask.project;
         if (saved && data.some((x) => x.slug === saved)) return saved;
         return data[0].slug;
       });
     } else {
       setProject("");
     }
-  }, [token]);
+  }, [token, sharedTask, consumeSharedTask]);
 
   useEffect(() => {
     loadProjects();
@@ -737,6 +759,8 @@ function AccountWorkspace({ token, saveToken }: {
       loadProjects={loadProjects}
       view={view}
       setView={setView}
+      sharedTask={sharedTask}
+      consumeSharedTask={consumeSharedTask}
     />
   );
 }
@@ -744,7 +768,7 @@ function AccountWorkspace({ token, saveToken }: {
 type WorkspaceView = "kanban" | "list" | "dashboard" | "agent";
 
 function ProjectWorkspace({
-  token, saveToken, project, projects, setProject, loadProjects, view, setView,
+  token, saveToken, project, projects, setProject, loadProjects, view, setView, sharedTask, consumeSharedTask,
 }: {
   token: string;
   saveToken: (token: string | null) => void;
@@ -754,6 +778,8 @@ function ProjectWorkspace({
   loadProjects: () => Promise<void>;
   view: WorkspaceView;
   setView: (view: WorkspaceView) => void;
+  sharedTask: SharedTask | null;
+  consumeSharedTask: () => void;
 }) {
   const [accessError, setAccessError] = useState(false);
   useEffect(() => {
@@ -904,6 +930,14 @@ function ProjectWorkspace({
   useEffect(() => {
     loadTasks();
   }, [loadTasks, project]);
+
+  useEffect(() => {
+    if (!sharedTask || sharedTask.project !== project || tasksProject !== project) return;
+    if (tasks.some((task) => task.id === sharedTask.taskId)) {
+      setOpenTaskId(sharedTask.taskId);
+    }
+    consumeSharedTask();
+  }, [sharedTask, project, tasks, tasksProject, consumeSharedTask]);
 
   const selectTask = (id: number, checked: boolean) => {
     setSelectedTasks((previous) => {
@@ -1455,6 +1489,7 @@ function ProjectWorkspace({
         <TaskDetail
           key={openTaskId}
           taskId={openTaskId}
+          project={project}
           epics={epics}
           members={members}
           tasks={tasks}
