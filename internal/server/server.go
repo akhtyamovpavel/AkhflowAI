@@ -556,12 +556,24 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// publish events
 	if s.Bus != nil {
-		for _, set := range sets {
-			if set == "status" {
-				s.Bus.Publish(events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Status: extractStatus(sets, args), Actor: s.Auth.ActorName(r.Context())})
-			} else if set == "recurring" {
-				s.Bus.Publish(events.Event{Type: "task_updated", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Actor: s.Auth.ActorName(r.Context())})
+		title := t.Title
+		moved, updated := false, false
+		for i, set := range sets {
+			if set == "title" {
+				title = args[i].(string)
 			}
+			if set == "status" {
+				moved = true
+			} else {
+				updated = true
+			}
+		}
+		actor := s.Auth.ActorName(r.Context())
+		if moved {
+			s.Bus.Publish(events.Event{Type: "task_moved", ProjectID: t.ProjectID, TaskID: id, Title: title, Status: extractStatus(sets, args), Actor: actor})
+		}
+		if updated {
+			s.Bus.Publish(events.Event{Type: "task_updated", ProjectID: t.ProjectID, TaskID: id, Title: title, Actor: actor})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
