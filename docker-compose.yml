@@ -22,7 +22,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       AGENT_MODEL: ${AGENT_MODEL:-qwen3.5:9b}
+      BITRIX24_WEBHOOK_URL: ${BITRIX24_WEBHOOK_URL:-}
+      BITRIX24_ALLOWED_USER_ID: ${BITRIX24_ALLOWED_USER_ID:-}
       API_PORT: "8080"
+      TRELLO_API_KEY: ${TRELLO_API_KEY:-}
+      TRELLO_API_TOKEN: ${TRELLO_API_TOKEN:-}
+      TRELLO_IMPORT_USER_ID: ${TRELLO_IMPORT_USER_ID:-}
     ports:
       - "8080:8080"
     depends_on:

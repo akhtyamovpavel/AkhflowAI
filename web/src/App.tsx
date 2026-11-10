@@ -176,6 +176,46 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
   return res.json();
 }
 
+function AkhcheckImport({ project, token, onImported }: { project: string; token: string | null; onImported: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || !project || !token) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (file.size > 4 * 1024 * 1024) throw new Error("Файл больше 4 МБ");
+      const course = JSON.parse(await file.text());
+      const result = await api(`/api/projects/${encodeURIComponent(project)}/imports/akhcheck`, {
+        method: "POST",
+        body: JSON.stringify(course),
+      }, token);
+      await onImported();
+      setMessage(`Добавлено: ${result.created}, уже было: ${result.skipped}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось импортировать файл");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>Импорт Akhcheck</Button>;
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={submit}>
+      <label className="text-sm" htmlFor="akhcheck-course-file">JSON курса Akhcheck</label>
+      <input id="akhcheck-course-file" type="file" accept="application/json,.json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+      <span className="text-xs text-muted-foreground">Сохрани JSON со страницы /api/teaching/course/ID в Akhcheck.</span>
+      <Button size="sm" type="submit" disabled={!file || busy}>Импортировать</Button>
+      <Button size="sm" variant="ghost" type="button" onClick={() => setOpen(false)}>Закрыть</Button>
+      {message && <span className="text-sm" role="status">{message}</span>}
+    </form>
+  );
+}
+
 function Login({ onLogin }: { onLogin: (t: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -550,9 +590,17 @@ export default function App() {
   const [epicFilter, setEpicFilter] = useState<string>("all");
   const [showNewEpic, setShowNewEpic] = useState(false);
   const [newEpicTitle, setNewEpicTitle] = useState("");
+  const [showTrelloImport, setShowTrelloImport] = useState(false);
+  const [trelloBoard, setTrelloBoard] = useState("");
+  const [trelloResult, setTrelloResult] = useState("");
+  const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showBitrixImport, setShowBitrixImport] = useState(false);
+  const [bitrixGroup, setBitrixGroup] = useState("");
+  const [bitrixBusy, setBitrixBusy] = useState(false);
+  const [bitrixMessage, setBitrixMessage] = useState("");
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -681,6 +729,24 @@ export default function App() {
     loadEpics();
   };
 
+  const importTrello = async () => {
+    if (!trelloBoard.trim() || trelloBusy) return;
+    setTrelloBusy(true);
+    setTrelloResult("");
+    try {
+      const result = await api(`/api/projects/${project}/imports/trello`, {
+        method: "POST",
+        body: JSON.stringify({ board_id: trelloBoard.trim() }),
+      }, token);
+      setTrelloResult(result.message);
+      await Promise.all([loadTasks(), loadEpics()]);
+    } catch (error: unknown) {
+      setTrelloResult(error instanceof Error ? error.message : "Не удалось импортировать доску");
+    } finally {
+      setTrelloBusy(false);
+    }
+  };
+
   const patchTaskEpic = async (taskId: number, epicId: number | null) => {
     await api(`/api/tasks/${taskId}`, {
       method: "PATCH",
@@ -697,6 +763,29 @@ export default function App() {
     }, token);
     setNewTitle("");
     loadTasks();
+  };
+
+  const importBitrixTasks = async () => {
+    if (!project || bitrixBusy) return;
+    const groupId = bitrixGroup.trim() ? Number(bitrixGroup) : 0;
+    if (!Number.isSafeInteger(groupId) || groupId < 0) {
+      setBitrixMessage("Укажи корректный номер группы Bitrix24");
+      return;
+    }
+    setBitrixBusy(true);
+    setBitrixMessage("");
+    try {
+      const result = await api(`/api/projects/${project}/imports/bitrix24`, {
+        method: "POST",
+        body: JSON.stringify({ group_id: groupId }),
+      }, token);
+      setBitrixMessage(result.message);
+      await loadTasks();
+    } catch {
+      setBitrixMessage("Не удалось импортировать задачи. Проверь настройки подключения и повтори попытку.");
+    } finally {
+      setBitrixBusy(false);
+    }
   };
 
   const newChat = async () => {
@@ -764,6 +853,7 @@ export default function App() {
               <Plus /> Проект
             </Button>
           )}
+          {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} />}
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={epicFilter}
@@ -792,6 +882,16 @@ export default function App() {
               <Layers /> Эпик
             </Button>
           )}
+          {showTrelloImport ? (
+            <form className="flex flex-wrap items-center gap-1" onSubmit={(e) => { e.preventDefault(); importTrello(); }}>
+              <Input className="h-8 w-44" aria-label="ID доски Trello" placeholder="ID доски Trello" value={trelloBoard} onChange={(e) => setTrelloBoard(e.target.value)} />
+              <Button size="sm" type="submit" disabled={trelloBusy || !trelloBoard.trim()}>{trelloBusy ? "Импортируем" : "Импортировать"}</Button>
+              <Button size="sm" variant="ghost" type="button" onClick={() => { setShowTrelloImport(false); setTrelloResult(""); }}>Закрыть</Button>
+              {trelloResult && <span role="status" className="text-sm">{trelloResult}</span>}
+            </form>
+          ) : (
+            <Button size="sm" variant="outline" disabled={!project} onClick={() => setShowTrelloImport(true)}>Импорт Trello</Button>
+          )}
           <div className="flex gap-1">
             <Button variant={view === "kanban" ? "default" : "ghost"} size="sm" onClick={() => setView("kanban")}>
               <KanbanSquare /> Канбан
@@ -813,6 +913,21 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {project && (
+          <div className="space-y-2">
+            <Button size="sm" variant="outline" onClick={() => setShowBitrixImport(!showBitrixImport)}>
+              Импорт из Bitrix24
+            </Button>
+            {showBitrixImport && (
+              <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); importBitrixTasks(); }}>
+                <label htmlFor="bitrix-group" className="text-sm">Номер группы (необязательно)</label>
+                <Input id="bitrix-group" className="w-40" type="number" min="1" step="1" value={bitrixGroup} onChange={(e) => setBitrixGroup(e.target.value)} />
+                <Button size="sm" type="submit" disabled={bitrixBusy}>{bitrixBusy ? "Импортируем" : "Импортировать"}</Button>
+              </form>
+            )}
+            {bitrixMessage && <p role="status" className="text-sm">{bitrixMessage}</p>}
+          </div>
+        )}
         {project && (
           <DeadlineReminders
             key={`${token}:${project}`}
