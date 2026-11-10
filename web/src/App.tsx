@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { DeadlineReminders } from "@/components/DeadlineReminders";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { QuickSearch } from "@/components/QuickSearch";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
@@ -240,7 +241,10 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Akhflow-AI</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Akhflow-AI</CardTitle>
+            <ThemeToggle />
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {mode === "register" && (
@@ -914,6 +918,7 @@ export default function App() {
             </Button>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             <EmailNotifications token={token} request={api} />
             <Button variant="ghost" size="sm" onClick={() => { saveToken(null); }}>Выйти</Button>
           </div>
