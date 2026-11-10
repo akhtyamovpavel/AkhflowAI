@@ -901,8 +901,9 @@ func (s *Server) deleteDependency(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sseEvents(w http.ResponseWriter, r *http.Request) {
 	uid, err := UserFrom(r.Context())
-	if err != nil {
-		http.Error(w, `{"error":"missing token"}`, http.StatusUnauthorized)
+	expiry, ok := r.Context().Value(tokenExpiryCtxKey).(time.Time)
+	if err != nil || !ok || !time.Now().Before(expiry) {
+		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 		return
 	}
 	p, ok := s.projectBySlug(w, r, uid)
@@ -922,14 +923,31 @@ func (s *Server) sseEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.Bus.Unsubscribe(sub)
 	heartbeat := time.NewTicker(25 * time.Second)
 	defer heartbeat.Stop()
+	expires := time.NewTimer(time.Until(expiry))
+	defer expires.Stop()
+	canReceive := func() bool {
+		if !time.Now().Before(expiry) {
+			return false
+		}
+		role, err := s.Store.ProjectRole(r.Context(), p.ID, uid)
+		return err == nil && store.CanReadProject(role) && time.Now().Before(expiry)
+	}
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-expires.C:
+			return
 		case <-heartbeat.C:
+			if !canReceive() {
+				return
+			}
 			fmt.Fprintf(w, ": ping\n\n")
 			flusher.Flush()
 		case e := <-sub.Ch:
+			if !canReceive() {
+				return
+			}
 			payload, _ := json.Marshal(e)
 			fmt.Fprintf(w, "data: %s\n\n", payload)
 			flusher.Flush()
