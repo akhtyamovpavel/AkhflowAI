@@ -203,6 +203,19 @@ func (s *Store) IsMember(ctx context.Context, projectID, userID int64) (bool, er
 	return ok, err
 }
 
+var ErrAssigneeNotMember = errors.New("assignee is not a project member")
+
+func (s *Store) ValidateAssignee(ctx context.Context, projectID, userID int64) error {
+	member, err := s.IsMember(ctx, projectID, userID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return ErrAssigneeNotMember
+	}
+	return nil
+}
+
 func (s *Store) ListProjectMembers(ctx context.Context, projectID int64) ([]domain.User, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT u.id, u.email, u.display_name
