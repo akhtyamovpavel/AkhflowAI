@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -261,8 +262,50 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; allTasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => void }) {
+function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; allTasks: Task[]; epics: Epic[]; onOpen: (id: number) => void; onMove: (id: number, dir: number) => Promise<void> }) {
+  const taskButtons = useRef(new Map<number, HTMLButtonElement>());
+  const pendingFocus = useRef<{ id: number; status: string } | null>(null);
+  const moving = useRef(false);
+  const [moveError, setMoveError] = useState("");
   const idx = (s: string) => COLUMNS.findIndex((c) => c.id === s);
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    const task = tasks.find((item) => item.id === pending.id);
+    if (task?.status === pending.status) {
+      if (document.activeElement === document.body) {
+        taskButtons.current.get(pending.id)?.focus();
+      }
+      pendingFocus.current = null;
+    }
+  }, [tasks]);
+
+  const moveTask = async (task: Task, direction: number, restoreFocus: boolean) => {
+    const target = COLUMNS[idx(task.status) + direction];
+    if (!target || moving.current) return;
+    moving.current = true;
+    setMoveError("");
+    if (restoreFocus) {
+      pendingFocus.current = { id: task.id, status: target.id };
+    }
+    try {
+      await onMove(task.id, direction);
+    } catch (error: unknown) {
+      pendingFocus.current = null;
+      const message = error instanceof Error ? error.message : "Не удалось переместить задачу";
+      setMoveError(message);
+    } finally {
+      moving.current = false;
+    }
+  };
+
+  const handleTaskKey = (event: ReactKeyboardEvent<HTMLButtonElement>, task: Task) => {
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    void moveTask(task, direction, true);
+  };
   const overdue = (t: Task) =>
     !!t.due_date && t.status !== "done" && new Date(`${t.due_date}T23:59:59`) < new Date();
   const blockedCount = (t: Task) =>
@@ -271,6 +314,9 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
       return dep && dep.status !== "done";
     }).length;
   return (
+    <>
+    <p id="kanban-keyboard-help" className="text-sm text-muted-foreground">Выбери название карточки и нажми ← или →, чтобы изменить её статус.</p>
+    {moveError && <p role="alert" className="text-sm text-destructive">{moveError}</p>}
     <div className="grid grid-cols-4 gap-4">
       {COLUMNS.map((col) => (
         <div key={col.id} className="space-y-2">
@@ -283,7 +329,17 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
               return (
                 <Card key={t.id}>
                   <CardContent className="p-3 space-y-2">
-                    <button className="text-left text-sm font-medium hover:underline" onClick={() => onOpen(t.id)}>
+                    <button
+                      ref={(element) => {
+                        if (element) taskButtons.current.set(t.id, element);
+                        else taskButtons.current.delete(t.id);
+                      }}
+                      aria-describedby="kanban-keyboard-help"
+                      aria-keyshortcuts="ArrowLeft ArrowRight"
+                      className="text-left text-sm font-medium hover:underline"
+                      onClick={() => onOpen(t.id)}
+                      onKeyDown={(event) => handleTaskKey(event, t)}
+                    >
                       {t.title}
                     </button>
                     <div className="flex items-center justify-between">
@@ -312,10 +368,10 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
                       </div>
                     )}
                     <div className="flex gap-1">
-                      <Button variant="outline" size="sm" disabled={i === 0} onClick={() => onMove(t.id, -1)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} влево`} disabled={i === 0} onClick={() => void moveTask(t, -1, false)}>
                         ←
                       </Button>
-                      <Button variant="outline" size="sm" disabled={i === COLUMNS.length - 1} onClick={() => onMove(t.id, 1)}>
+                      <Button variant="outline" size="sm" aria-label={`Переместить ${t.title} вправо`} disabled={i === COLUMNS.length - 1} onClick={() => void moveTask(t, 1, false)}>
                         →
                       </Button>
                     </div>
@@ -326,6 +382,7 @@ function Kanban({ tasks, allTasks, epics, onOpen, onMove }: { tasks: Task[]; all
         </div>
       ))}
     </div>
+    </>
   );
 }
 
@@ -698,6 +755,20 @@ function ProjectWorkspace({
   const [bitrixGroup, setBitrixGroup] = useState("");
   const [bitrixBusy, setBitrixBusy] = useState(false);
   const [bitrixMessage, setBitrixMessage] = useState("");
+  const newTaskInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusNewTask = (event: KeyboardEvent) => {
+      if (!token || !project || openTaskId || showNewProject || showNewEpic || showTrelloImport || showBitrixImport) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat || event.code !== "KeyN") return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("form, input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='dialog']")) return;
+      event.preventDefault();
+      newTaskInput.current?.focus();
+    };
+    window.addEventListener("keydown", focusNewTask);
+    return () => window.removeEventListener("keydown", focusNewTask);
+  }, [token, project, openTaskId, showNewProject, showNewEpic, showTrelloImport, showBitrixImport]);
 
   const loadTasks = useCallback(async () => {
     if (!token || !project) return;
@@ -782,7 +853,7 @@ function ProjectWorkspace({
     const target = COLUMNS[i + dir];
     if (!target) return;
     await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: target.id }) }, token);
-    loadTasks();
+    await loadTasks();
   };
 
   const createProject = async () => {
@@ -1033,6 +1104,8 @@ function ProjectWorkspace({
         )}
         <div className="flex gap-2">
           <Input
+            ref={newTaskInput}
+            aria-keyshortcuts="Alt+N"
             className="max-w-sm"
             placeholder="Новая задача..."
             value={newTitle}
@@ -1041,6 +1114,7 @@ function ProjectWorkspace({
           />
           <Button size="sm" onClick={createTask}><Plus /> Добавить</Button>
         </div>
+        <p className="text-sm text-muted-foreground">Alt+N: перейти к созданию задачи.</p>
 
         {view === "kanban" && <Kanban tasks={visibleTasks} allTasks={tasks} epics={epics} onOpen={setOpenTaskId} onMove={move} />}
 
