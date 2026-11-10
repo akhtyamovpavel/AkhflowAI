@@ -138,7 +138,7 @@ try {
   failRefresh = true;
   await title.fill("Saved despite refresh failure");
   await description.click();
-  await page.getByRole("alert").filter({ hasText: "Заголовок сохранён, но не удалось обновить карточку" }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Не удалось обновить карточку после сохранения заголовка" }).waitFor();
   assert.equal(task.title, "Saved despite refresh failure");
   assert.equal(await title.inputValue(), "Saved despite refresh failure");
   assert.equal(await saveError.count(), 0);

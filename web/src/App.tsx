@@ -528,7 +528,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
         await load();
         await onChanged();
       } catch {
-        setTitleError("Заголовок сохранён, но не удалось обновить карточку. Обнови страницу.");
+        setTitleError("Не удалось обновить карточку после сохранения заголовка. Введённый текст остался в поле.");
       }
     } catch {
       setTitleError("Не удалось сохранить заголовок. Введённый текст остался в поле. Попробуй ещё раз.");
