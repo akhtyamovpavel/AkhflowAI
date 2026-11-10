@@ -536,7 +536,13 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			args = append(args, n)
 		}
 	}
-	if err := s.Store.UpdateTask(r.Context(), id, sets, args); err != nil {
+	var statusChanged bool
+	if _, hasStatus := body["status"]; hasStatus {
+		statusChanged, err = s.Store.UpdateTaskWithStatusChange(r.Context(), id, sets, args)
+	} else {
+		err = s.Store.UpdateTask(r.Context(), id, sets, args)
+	}
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
@@ -563,7 +569,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 				title = args[i].(string)
 			}
 			if set == "status" {
-				moved = true
+				moved = statusChanged
 			} else {
 				updated = true
 			}

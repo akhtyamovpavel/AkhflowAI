@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +157,76 @@ func TestTaskUpdateEvents(t *testing.T) {
 		t.Fatalf("patch: %d", got)
 	}
 	check("Combined", "task_moved", "task_updated")
+	if got := request(owner, "PATCH", path, `{"status":"todo"}`); got != 200 {
+		t.Fatalf("unchanged status: %d", got)
+	}
+	check("Combined")
+	if got := request(owner, "PATCH", path, `{"status":"todo","description":"Changed"}`); got != 200 {
+		t.Fatalf("mixed unchanged status: %d", got)
+	}
+	check("Combined", "task_updated")
+	stored, err := db.TaskByID(ctx, taskID)
+	if err != nil || stored.Description != "Changed" {
+		t.Fatalf("mixed patch not saved: %+v, %v", stored, err)
+	}
+	move := toolbox.ByName("move_task")
+	moveDeps := toolbox.Deps{Store: db, ActorID: owner, Actor: "owner@example.invalid", Bus: bus}
+	moveArgs, _ := json.Marshal(map[string]any{"task_id": taskID, "status": "todo"})
+	if _, err := move.Handler(ctx, moveDeps, moveArgs); err != nil {
+		t.Fatal(err)
+	}
+	check("Combined")
+	moveArgs, _ = json.Marshal(map[string]any{"task_id": taskID, "status": "in_progress"})
+	if _, err := move.Handler(ctx, moveDeps, moveArgs); err != nil {
+		t.Fatal(err)
+	}
+	check("Combined", "task_moved")
+	if _, err := move.Handler(ctx, moveDeps, moveArgs); err != nil {
+		t.Fatal(err)
+	}
+	check("Combined")
+	token, err := auth.CreateToken(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 6; round++ {
+		status := "backlog"
+		if round%2 != 0 {
+			status = "in_progress"
+		}
+		body := fmt.Sprintf(`{"status":%q}`, status)
+		args, _ := json.Marshal(map[string]any{"task_id": taskID, "status": status})
+		start := make(chan struct{})
+		errors := make(chan error, 16)
+		var workers sync.WaitGroup
+		for worker := 0; worker < 16; worker++ {
+			workers.Add(1)
+			go func(useREST bool) {
+				defer workers.Done()
+				<-start
+				if useREST {
+					req := httptest.NewRequest("PATCH", path, strings.NewReader(body))
+					req.Header.Set("Authorization", "Bearer "+token)
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, req)
+					if response.Code != 200 {
+						errors <- fmt.Errorf("patch status: %d", response.Code)
+					}
+					return
+				}
+				if _, err := move.Handler(ctx, moveDeps, args); err != nil {
+					errors <- err
+				}
+			}(worker%2 == 0)
+		}
+		close(start)
+		workers.Wait()
+		close(errors)
+		for err := range errors {
+			t.Error(err)
+		}
+		check("Combined", "task_moved")
+	}
 	if got := request(owner, "PATCH", path, fmt.Sprintf(`{"assignee_id":%d}`, viewer)); got != 200 {
 		t.Fatalf("patch assignee: %d", got)
 	}
