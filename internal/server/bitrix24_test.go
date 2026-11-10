@@ -5,19 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/store"
+	"akhflow.ai/akhflow/internal/testdb"
 )
 
 func TestBitrixImportHTTP(t *testing.T) {
-	dsn := os.Getenv("AKHFLOW_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("isolated test database not configured")
-	}
+	dsn := testdb.Schema(t, "AKHFLOW_TEST_DATABASE_URL")
 	ctx := context.Background()
 	st, err := store.New(dsn)
 	if err != nil {

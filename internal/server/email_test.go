@@ -7,21 +7,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"akhflow.ai/akhflow/internal/domain"
 	"akhflow.ai/akhflow/internal/store"
+	"akhflow.ai/akhflow/internal/testdb"
 	"akhflow.ai/akhflow/internal/toolbox"
 )
 
 func TestEmailSettingsAndStatusChanges(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set TEST_DATABASE_URL to an isolated PostgreSQL database")
-	}
+	dsn := testdb.Schema(t, "TEST_DATABASE_URL")
 	ctx := context.Background()
 	db, err := store.New(dsn)
 	if err != nil {

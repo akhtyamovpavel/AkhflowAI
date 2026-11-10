@@ -27,8 +27,15 @@ jobs:
           cache: true
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./...
+      - name: Run Go tests and require import and email coverage
+        shell: bash
+        run: |
+          mkdir -p bin
+          go test -count=1 -json ./... | tee bin/go-test-results.json
+          python3 scripts/check_integration_results.py bin/go-test-results.json
         env:
+          AKHFLOW_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
+          TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_ISOLATION_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_SSE_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
           AKHFLOW_AGENT_USAGE_TEST_DSN: postgres://postgres@localhost:5432/postgres?sslmode=disable
