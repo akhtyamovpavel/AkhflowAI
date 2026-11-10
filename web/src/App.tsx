@@ -466,6 +466,12 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   request: ApiRequest;
 }) {
   const [task, setTask] = useState<Task | null>(null);
+  const [title, setTitle] = useState("");
+  const [titleDirty, setTitleDirty] = useState(false);
+  const [titleError, setTitleError] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  const titleDraft = useRef({ value: "", revision: 0, dirty: false });
+  const titleSavePending = useRef(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [deps, setDeps] = useState<Task[]>([]);
   const [blocks, setBlocks] = useState<Task[]>([]);
@@ -479,8 +485,13 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const load = useCallback(async () => {
     if (!token) return;
+    const titleRevision = titleDraft.current.revision;
     const data = await request(`/api/tasks/${taskId}`, {}, token);
     setTask(data.task);
+    if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
+      titleDraft.current.value = data.task.title;
+      setTitle(data.task.title);
+    }
     setComments(data.comments ?? []);
     setDeps(data.dependencies ?? []);
     setBlocks(data.blocks ?? []);
@@ -498,6 +509,33 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
     await load();
     onChanged();
+  };
+
+  const saveTitle = async () => {
+    if (titleSavePending.current || !titleDraft.current.dirty) return;
+    const { value, revision } = titleDraft.current;
+    titleSavePending.current = true;
+    setSavingTitle(true);
+    setTitleError("");
+    try {
+      await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ title: value }) }, token);
+      if (titleDraft.current.revision === revision) {
+        titleDraft.current.dirty = false;
+        setTitleDirty(false);
+      }
+      titleDraft.current.revision++;
+      try {
+        await load();
+        await onChanged();
+      } catch {
+        setTitleError("Заголовок сохранён, но не удалось обновить карточку. Обнови страницу.");
+      }
+    } catch {
+      setTitleError("Не удалось сохранить заголовок. Введённый текст остался в поле. Попробуй ещё раз.");
+    } finally {
+      titleSavePending.current = false;
+      setSavingTitle(false);
+    }
   };
 
   const addComment = async () => {
@@ -589,12 +627,27 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             Обсудить в Telegram
           </Button>
           <Input
-            value={task.title}
-            onChange={(e) => setTask({ ...task, title: e.target.value })}
-            onBlur={() => patch({ title: task.title })}
+            aria-label="Заголовок задачи"
+            aria-invalid={!!titleError && titleDirty}
+            value={title}
+            onChange={(e) => {
+              const value = e.target.value;
+              titleDraft.current = { value, revision: titleDraft.current.revision + 1, dirty: true };
+              setTitle(value);
+              setTitleDirty(true);
+              setTitleError("");
+            }}
+            onBlur={() => void saveTitle()}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             className="text-base font-medium"
           />
+          {savingTitle && <p role="status" className="text-sm text-muted-foreground">Сохраняем заголовок...</p>}
+          {titleError && <p role="alert" className="text-sm text-destructive">{titleError}</p>}
+          {titleDirty && !savingTitle && (
+            <Button size="sm" variant="outline" onClick={() => void saveTitle()}>
+              {titleError ? "Повторить сохранение" : "Сохранить заголовок"}
+            </Button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-muted-foreground">Статус
               <select
