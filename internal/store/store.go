@@ -330,18 +330,8 @@ func (s *Store) ListRecurringOverdue(ctx context.Context, now time.Time) ([]doma
 }
 
 func (s *Store) UpdateTask(ctx context.Context, id int64, sets []string, args []any) error {
-	_, err := s.updateTask(ctx, id, sets, args, false)
-	return err
-}
-
-// UpdateTaskWithStatusChange compares the status while holding the row lock.
-func (s *Store) UpdateTaskWithStatusChange(ctx context.Context, id int64, sets []string, args []any) (bool, error) {
-	return s.updateTask(ctx, id, sets, args, true)
-}
-
-func (s *Store) updateTask(ctx context.Context, id int64, sets []string, args []any, compareStatus bool) (bool, error) {
 	if len(sets) == 0 {
-		return false, nil
+		return nil
 	}
 	setClauses := make([]string, 0, len(sets))
 	for i, col := range sets {
@@ -350,20 +340,21 @@ func (s *Store) updateTask(ctx context.Context, id int64, sets []string, args []
 	params := make([]any, 0, len(args)+1)
 	params = append(params, args...)
 	params = append(params, id)
-	query := fmt.Sprintf(`UPDATE tasks SET %s, updated_at=now() WHERE id=$%d RETURNING false`, strings.Join(setClauses, ", "), len(params))
-	if compareStatus {
-		query = fmt.Sprintf(`WITH previous AS (SELECT status FROM tasks WHERE id=$%d FOR UPDATE)
-			UPDATE tasks SET %s, updated_at=now() FROM previous WHERE tasks.id=$%d
-			RETURNING previous.status IS DISTINCT FROM tasks.status`, len(params), strings.Join(setClauses, ", "), len(params))
-	}
-	var changed bool
-	if err := s.db.QueryRow(ctx, query, params...).Scan(&changed); err != nil {
+	query := fmt.Sprintf(`UPDATE tasks SET %s, updated_at=now() WHERE id=$%d RETURNING id`, strings.Join(setClauses, ", "), len(params))
+	var updatedID int64
+	if err := s.db.QueryRow(ctx, query, params...).Scan(&updatedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrNotFound
+			return ErrNotFound
 		}
-		return false, err
+		return err
 	}
-	return changed, nil
+	return nil
+}
+
+// UpdateTaskWithStatusChange compares the status while holding the row lock.
+func (s *Store) UpdateTaskWithStatusChange(ctx context.Context, id int64, sets []string, args []any) (bool, error) {
+	result, err := s.UpdateTaskWithRecurrence(ctx, id, sets, args, "system", 0)
+	return result.StatusChanged, err
 }
 
 func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]domain.Task, error) {
