@@ -55,6 +55,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node ../scripts/smoke_deadlines.mjs --unit
+      - run: node ../scripts/test_stale_auth_ui.mjs
 
   compose:
     runs-on: ubuntu-latest
