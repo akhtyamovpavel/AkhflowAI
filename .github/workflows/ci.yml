@@ -58,6 +58,7 @@ jobs:
       - run: node ../scripts/smoke_deadlines.mjs --unit
       - run: node ../scripts/test_stale_auth_ui.mjs
       - run: node ../scripts/test_stale_forbidden_ui.mjs
+      - run: node ../scripts/test_login_session_ui.mjs
 
   compose:
     runs-on: ubuntu-latest
