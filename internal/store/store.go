@@ -325,8 +325,8 @@ func (s *Store) ListTasksByEpic(ctx context.Context, epicID int64) ([]domain.Tas
 
 func (s *Store) ListRecurringOverdue(ctx context.Context, now time.Time) ([]domain.Task, error) {
 	return s.queryTasks(ctx, `SELECT `+taskCols+` FROM tasks
-		WHERE recurring != '' AND due_date IS NOT NULL AND due_date <= $1 AND status != $2
-		ORDER BY due_date, id`, now, domain.StatusDone)
+		WHERE recurring != '' AND due_date IS NOT NULL AND due_date <= $1::date AND status != $2
+		ORDER BY due_date, id`, now.Format(time.DateOnly), domain.StatusDone)
 }
 
 func (s *Store) UpdateTask(ctx context.Context, id int64, sets []string, args []any) error {

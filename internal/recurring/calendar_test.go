@@ -20,6 +20,7 @@ func TestRecurringCalendarAcrossTimezones(t *testing.T) {
 	}{
 		{"utc-daily", "UTC", 2030, time.January, 2, 0, "2030-01-01", "daily", "2030-01-03"},
 		{"moscow-before-utc-midnight", "Europe/Moscow", 2030, time.January, 2, 0, "2030-01-01", "daily", "2030-01-03"},
+		{"moscow-due-today-before-utc-midnight", "Europe/Moscow", 2030, time.January, 2, 0, "2030-01-02", "daily", "2030-01-03"},
 		{"los-angeles-after-utc-midnight", "America/Los_Angeles", 2030, time.January, 2, 23, "2030-01-02", "daily", "2030-01-03"},
 		{"spring-forward", "America/Los_Angeles", 2027, time.March, 14, 1, "2027-03-14", "daily", "2027-03-15"},
 		{"fall-back-weekly", "America/Los_Angeles", 2027, time.November, 7, 1, "2027-11-07", "weekly", "2027-11-14"},

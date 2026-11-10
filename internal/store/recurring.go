@@ -18,8 +18,8 @@ func (s *Store) CreateScheduledOccurrence(ctx context.Context, masterID int64, n
 	}
 	defer tx.Rollback(ctx)
 	query := `SELECT ` + taskCols + ` FROM tasks
-		WHERE id=$1 AND recurring != '' AND due_date IS NOT NULL AND due_date <= $2 AND status != $3 FOR UPDATE`
-	master, err := s.scanTask(tx.QueryRow(ctx, query, masterID, now, domain.StatusDone))
+		WHERE id=$1 AND recurring != '' AND due_date IS NOT NULL AND due_date <= $2::date AND status != $3 FOR UPDATE`
+	master, err := s.scanTask(tx.QueryRow(ctx, query, masterID, now.Format(time.DateOnly), domain.StatusDone))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
