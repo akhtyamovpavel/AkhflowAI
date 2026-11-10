@@ -109,6 +109,33 @@ func TestProjectRolesEnforceAccess(t *testing.T) {
 		handler.ServeHTTP(response, req)
 		return response.Code
 	}
+	viewerToken, err := auth.CreateToken(viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membersReq := httptest.NewRequest("GET", "/api/projects/roles-test/members", nil)
+	membersReq.Header.Set("Authorization", "Bearer "+viewerToken)
+	membersResponse := httptest.NewRecorder()
+	handler.ServeHTTP(membersResponse, membersReq)
+	if membersResponse.Code != 200 {
+		t.Fatalf("viewer list members: got %d", membersResponse.Code)
+	}
+	var members []domain.User
+	if err := json.Unmarshal(membersResponse.Body.Bytes(), &members); err != nil {
+		t.Fatal(err)
+	}
+	wantRoles := map[int64]string{owner: "owner", viewer: "viewer", editor: "editor", legacy: "member"}
+	if len(members) != len(wantRoles) {
+		t.Fatalf("list members: got %d members, want %d", len(members), len(wantRoles))
+	}
+	for _, member := range members {
+		if wantRoles[member.ID] != member.Role || member.Email == "" || member.DisplayName == "" {
+			t.Errorf("unexpected member or role: %+v", member)
+		}
+	}
+	if status := request(outsider, "GET", "/api/projects/roles-test/members", ""); status != 403 {
+		t.Errorf("outsider list members: got %d, want 403", status)
+	}
 	for _, actor := range []struct {
 		id       int64
 		name     string

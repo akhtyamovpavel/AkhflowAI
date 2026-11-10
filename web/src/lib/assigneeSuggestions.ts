@@ -2,7 +2,7 @@ type Member = {
   id: number;
   display_name: string;
   email: string;
-  role?: string;
+  role: string;
 };
 
 type Task = {
@@ -11,7 +11,7 @@ type Task = {
 };
 
 export function suggestAssignee(members: Member[], tasks: Task[]) {
-  const eligibleMembers = members.filter((member) => member.role !== "viewer");
+  const eligibleMembers = members.filter((member) => ["owner", "admin", "member", "editor"].includes(member.role));
   const counts = new Map<number, number>();
   for (const member of eligibleMembers) {
     counts.set(member.id, 0);

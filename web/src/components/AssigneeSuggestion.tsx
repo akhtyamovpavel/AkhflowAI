@@ -1,7 +1,7 @@
 import { suggestAssignee } from "@/lib/assigneeSuggestions";
 
 type Props = {
-  members: { id: number; display_name: string; email: string; role?: string }[];
+  members: { id: number; display_name: string; email: string; role: string }[];
   tasks: { status: string; assignee_id?: number | null }[];
   ready: boolean;
 };

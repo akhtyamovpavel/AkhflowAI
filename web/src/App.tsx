@@ -71,6 +71,7 @@ type Member = {
   id: number;
   email: string;
   display_name: string;
+  role: string;
 };
 
 const COLUMNS = [
@@ -879,6 +880,7 @@ function ProjectWorkspace({
 
   const loadMembers = useCallback(async () => {
     if (!token || !project) return;
+    setMembersLoaded(false);
     const data: Member[] = (await api(`/api/projects/${project}/members`, {}, token)) ?? [];
     setMembers(data);
     setMembersLoaded(true);
@@ -1215,7 +1217,7 @@ function ProjectWorkspace({
             <Button variant="ghost" size="sm" onClick={() => setAccessError(false)}>Закрыть</Button>
           </div>
         )}
-        {project && <ProjectMembers key={project} project={project} token={token} request={api} />}
+        {project && <ProjectMembers project={project} token={token} request={api} onMembersChanged={loadMembers} />}
         {project && (
           <QuickSearch
             key={project}

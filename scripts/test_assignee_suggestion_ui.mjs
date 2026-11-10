@@ -25,7 +25,7 @@ const tasks = {
 };
 const members = {
   alpha: [{ id: 3, display_name: "Борис", email: "b@example.test", role: "editor" }, { id: 2, display_name: "Анна", email: "a@example.test", role: "member" }, { id: 1, display_name: "Читатель", email: "reader@example.test", role: "viewer" }],
-  beta: [{ id: 4, display_name: "Вера", email: "v@example.test" }, { id: 5, display_name: "Глеб", email: "g@example.test" }],
+  beta: [{ id: 4, display_name: "Вера", email: "v@example.test", role: "admin" }, { id: 5, display_name: "Глеб", email: "g@example.test", role: "owner" }],
   empty: [],
   viewers: [{ id: 6, display_name: "Только читатель", email: "reader2@example.test", role: "viewer" }],
 };
@@ -51,6 +51,13 @@ try {
     let data = [];
     if (path === "/api/projects") {
       data = Object.keys(tasks).map((slug, index) => ({ id: index + 1, slug, name: slug }));
+    } else if (path === "/api/projects/alpha/role") {
+      data = { role: "owner" };
+    } else if (path === "/api/projects/alpha/members" && request.method() === "PUT") {
+      const { email, role } = request.postDataJSON();
+      const member = members.alpha.find((item) => item.email === email);
+      member.role = role;
+      data = { status: "updated" };
     } else {
       const projectData = path.match(/^\/api\/projects\/(alpha|beta|empty|viewers)\/(tasks|members)$/);
       const taskDetail = path.match(/^\/api\/tasks\/(\d+)$/);
@@ -64,6 +71,15 @@ try {
   const suggestion = page.getByLabel("Рекомендация исполнителя");
   await suggestion.getByText("Рекомендуем: Анна · Незавершённых задач: 1").waitFor();
   await suggestion.getByText(/При равенстве выбран участник с меньшим ID/).waitFor();
+  assert.equal(mutations, 0, "suggestions must not change an assignee");
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  await page.getByRole("button", { name: "Участники и роли" }).click();
+  await page.getByLabel("Email зарегистрированного пользователя").fill("a@example.test");
+  await page.getByLabel("Роль", { exact: true }).selectOption("viewer");
+  await page.getByRole("button", { name: "Сохранить права" }).click();
+  await page.getByText("Права участника сохранены").waitFor();
+  await page.getByRole("button", { name: "Задача Альфы", exact: true }).click();
+  await suggestion.getByText("Рекомендуем: Борис · Незавершённых задач: 1").waitFor();
 
   await page.locator("header select").first().selectOption("beta");
   await page.getByRole("button", { name: "Задача Беты", exact: true }).click();
@@ -76,7 +92,7 @@ try {
   await page.locator("header select").first().selectOption("viewers");
   await page.getByRole("button", { name: "Проект читателей", exact: true }).click();
   await page.getByText("Нет участников с правом редактирования для рекомендации.").waitFor();
-  assert.equal(mutations, 0, "suggestions must not change an assignee");
+  assert.equal(mutations, 1, "only the explicit role change may write");
   console.log("PASS: workload, tie-breaking, project isolation, empty members and read-only behavior");
 } finally {
   if (browser) await browser.close();
