@@ -43,6 +43,8 @@ try {
     let data = [];
     if (path === "/api/projects") {
       data = [{ id: 1, slug: "alpha", name: "Альфа" }, { id: 2, slug: "beta", name: "Бета" }];
+    } else if (path.endsWith("/dashboard-preferences")) {
+      data = { hidden_widgets: [] };
     } else if (path === "/api/projects/alpha/tasks") {
       data = [
         { id: 1, title: "Первая", status: alphaTaskDone ? "done" : "backlog", priority: "high", assignee_id: 1, epic_id: 7 },

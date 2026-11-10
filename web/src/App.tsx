@@ -1316,7 +1316,7 @@ function ProjectWorkspace({
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} />
+            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} project={project} token={token} request={api} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 
