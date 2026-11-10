@@ -180,7 +180,9 @@ function useToken() {
   return [token, save] as const;
 }
 
-async function api(path: string, opts: RequestInit = {}, token?: string | null) {
+type ApiRequest = (path: string, opts?: RequestInit, token?: string | null) => Promise<any>;
+
+export async function api(path: string, opts: RequestInit = {}, token?: string | null, onForbidden?: () => void) {
   const res = await fetch(API + path, {
     ...opts,
     headers: {
@@ -194,8 +196,9 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
       localStorage.removeItem("akhflow.token");
       window.location.reload();
     }
-    if (res.status === 403 && opts.method && !["GET", "HEAD"].includes(opts.method.toUpperCase())) {
-      window.dispatchEvent(new Event("akhflow:write-forbidden"));
+    if (res.status === 403 && token && localStorage.getItem("akhflow.token") === token &&
+        !opts.signal?.aborted && opts.method && !["GET", "HEAD"].includes(opts.method.toUpperCase())) {
+      onForbidden?.();
     }
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
@@ -203,7 +206,7 @@ async function api(path: string, opts: RequestInit = {}, token?: string | null) 
   return res.json();
 }
 
-function AkhcheckImport({ project, token, onImported }: { project: string; token: string | null; onImported: () => Promise<void> }) {
+function AkhcheckImport({ project, token, onImported, request }: { project: string; token: string | null; onImported: () => Promise<void>; request: ApiRequest }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -217,7 +220,7 @@ function AkhcheckImport({ project, token, onImported }: { project: string; token
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error("Файл больше 4 МБ");
       const course = JSON.parse(await file.text());
-      const result = await api(`/api/projects/${encodeURIComponent(project)}/imports/akhcheck`, {
+      const result = await request(`/api/projects/${encodeURIComponent(project)}/imports/akhcheck`, {
         method: "POST",
         body: JSON.stringify(course),
       }, token);
@@ -430,7 +433,7 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
-function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged }: {
+function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
   project: string;
   epics: Epic[];
@@ -440,6 +443,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   onOpen: (id: number) => void;
   onClose: () => void;
   onChanged: () => void;
+  request: ApiRequest;
 }) {
   const [task, setTask] = useState<Task | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -455,14 +459,14 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const load = useCallback(async () => {
     if (!token) return;
-    const data = await api(`/api/tasks/${taskId}`, {}, token);
+    const data = await request(`/api/tasks/${taskId}`, {}, token);
     setTask(data.task);
     setComments(data.comments ?? []);
     setDeps(data.dependencies ?? []);
     setBlocks(data.blocks ?? []);
     setHistory(data.history ?? []);
     setDesc(data.task.description ?? "");
-  }, [taskId, token]);
+  }, [taskId, token, request]);
 
   useEffect(() => {
     load();
@@ -471,14 +475,14 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   if (!task) return null;
 
   const patch = async (body: unknown) => {
-    await api(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
+    await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
     await load();
     onChanged();
   };
 
   const addComment = async () => {
     if (!comment.trim()) return;
-    await api(`/api/tasks/${taskId}/comments`, {
+    await request(`/api/tasks/${taskId}/comments`, {
       method: "POST",
       body: JSON.stringify({ body: comment.trim() }),
     }, token);
@@ -488,7 +492,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const addDep = async () => {
     if (!newDep) return;
-    await api(`/api/tasks/${taskId}/dependencies`, {
+    await request(`/api/tasks/${taskId}/dependencies`, {
       method: "POST",
       body: JSON.stringify({ depends_on: Number(newDep) }),
     }, token);
@@ -501,7 +505,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     setDependencyError("");
     setRemovingDependency(true);
     try {
-      await api(`/api/tasks/${sourceId}/dependencies/${depId}`, { method: "DELETE" }, token);
+      await request(`/api/tasks/${sourceId}/dependencies/${depId}`, { method: "DELETE" }, token);
       await load();
       onChanged();
     } catch {
@@ -803,17 +807,17 @@ function ProjectWorkspace({
   consumeSharedTask: () => void;
 }) {
   const [accessError, setAccessError] = useState(false);
-  useEffect(() => {
-    const showAccessError = () => setAccessError(true);
-    window.addEventListener("akhflow:write-forbidden", showAccessError);
-    return () => window.removeEventListener("akhflow:write-forbidden", showAccessError);
-  }, []);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
+  }, []);
+  const workspaceApi = useCallback<ApiRequest>((path, options, requestToken) => {
+    return api(path, options, requestToken, () => {
+      if (mounted.current) setAccessError(true);
+    });
   }, []);
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -869,38 +873,38 @@ function ProjectWorkspace({
   const loadTasks = useCallback(async () => {
     if (!token || !project) return;
     const request = ++taskRequest.current;
-    const data: Task[] = (await api(`/api/projects/${project}/tasks`, {}, token)) ?? [];
+    const data: Task[] = (await workspaceApi(`/api/projects/${project}/tasks`, {}, token)) ?? [];
     if (!mounted.current || request !== taskRequest.current) return;
     setTasks(data);
     setTasksProject(project);
-  }, [token, project]);
+  }, [token, project, workspaceApi]);
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
-    return (await api(`/api/projects/${project}/tasks`, { signal }, token)) ?? [];
-  }, [token, project]);
+    return (await workspaceApi(`/api/projects/${project}/tasks`, { signal }, token)) ?? [];
+  }, [token, project, workspaceApi]);
 
   const loadDashboard = useCallback(async (signal: AbortSignal) => {
     const [projectTasks, projectMembers, projectEpics] = await Promise.all([
-      api(`/api/projects/${project}/tasks`, { signal }, token),
-      api(`/api/projects/${project}/members`, { signal }, token),
-      api(`/api/projects/${project}/epics`, { signal }, token),
+      workspaceApi(`/api/projects/${project}/tasks`, { signal }, token),
+      workspaceApi(`/api/projects/${project}/members`, { signal }, token),
+      workspaceApi(`/api/projects/${project}/epics`, { signal }, token),
     ]);
     return { tasks: projectTasks ?? [], members: projectMembers ?? [], epics: projectEpics ?? [] };
-  }, [token, project]);
+  }, [token, project, workspaceApi]);
 
   const loadAgentUsage = useCallback(async (days: number, signal: AbortSignal): Promise<AgentUsageData> => {
-    return api(`/api/projects/${encodeURIComponent(project)}/agent/usage?days=${days}`, { signal }, token);
-  }, [token, project]);
+    return workspaceApi(`/api/projects/${encodeURIComponent(project)}/agent/usage?days=${days}`, { signal }, token);
+  }, [token, project, workspaceApi]);
 
   const loadChats = useCallback(async () => {
     if (!token || !project) return;
-    const data: ChatSession[] = (await api(`/api/projects/${project}/chats`, {}, token)) ?? [];
+    const data: ChatSession[] = (await workspaceApi(`/api/projects/${project}/chats`, {}, token)) ?? [];
     setChats(data);
     setActiveChat((prev) => {
       if (prev && data.some((c) => c.id === prev)) return prev;
       return data.length > 0 ? data[0].id : null;
     });
-  }, [token, project]);
+  }, [token, project, workspaceApi]);
 
   const loadMessages = useCallback(
     async (chatId: number) => {
@@ -909,12 +913,12 @@ function ProjectWorkspace({
       }
       const request = (messageRequests.current.get(chatId) ?? 0) + 1;
       messageRequests.current.set(chatId, request);
-      const data: ChatMessage[] = (await api(`/api/chats/${chatId}/messages`, {}, token)) ?? [];
+      const data: ChatMessage[] = (await workspaceApi(`/api/chats/${chatId}/messages`, {}, token)) ?? [];
       if (messageRequests.current.get(chatId) === request) {
         setMessagesByChat((current) => ({ ...current, [chatId]: data }));
       }
     },
-    [token],
+    [token, workspaceApi],
   );
 
   useEffect(() => {
@@ -927,10 +931,10 @@ function ProjectWorkspace({
 
   const loadEpics = useCallback(async () => {
     if (!token || !project) return;
-    const data: Epic[] = (await api(`/api/projects/${project}/epics`, {}, token)) ?? [];
+    const data: Epic[] = (await workspaceApi(`/api/projects/${project}/epics`, {}, token)) ?? [];
     setEpics(data);
     setEpicsProject(project);
-  }, [token, project]);
+  }, [token, project, workspaceApi]);
 
   useEffect(() => {
     loadEpics();
@@ -939,10 +943,10 @@ function ProjectWorkspace({
   const loadMembers = useCallback(async () => {
     if (!token || !project) return;
     setMembersLoaded(false);
-    const data: Member[] = (await api(`/api/projects/${project}/members`, {}, token)) ?? [];
+    const data: Member[] = (await workspaceApi(`/api/projects/${project}/members`, {}, token)) ?? [];
     setMembers(data);
     setMembersLoaded(true);
-  }, [token, project]);
+  }, [token, project, workspaceApi]);
 
   useEffect(() => {
     loadMembers();
@@ -1057,7 +1061,7 @@ function ProjectWorkspace({
         continue;
       }
       try {
-        await api(`/api/tasks/${task.id}`, {
+        await workspaceApi(`/api/tasks/${task.id}`, {
           method: "PATCH",
           body: JSON.stringify({ status: bulkStatus }),
         }, token);
@@ -1096,13 +1100,13 @@ function ProjectWorkspace({
     const i = COLUMNS.findIndex((c) => c.id === t.status);
     const target = COLUMNS[i + dir];
     if (!target) return;
-    await api(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: target.id }) }, token);
+    await workspaceApi(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: target.id }) }, token);
     await loadTasks();
   };
 
   const createProject = async () => {
     if (!newProjectName.trim()) return;
-    const data: Project = await api("/api/projects", {
+    const data: Project = await workspaceApi("/api/projects", {
       method: "POST",
       body: JSON.stringify({ name: newProjectName.trim() }),
     }, token);
@@ -1116,7 +1120,7 @@ function ProjectWorkspace({
 
   const createEpic = async () => {
     if (!newEpicTitle.trim()) return;
-    await api(`/api/projects/${project}/epics`, {
+    await workspaceApi(`/api/projects/${project}/epics`, {
       method: "POST",
       body: JSON.stringify({ title: newEpicTitle.trim() }),
     }, token);
@@ -1130,7 +1134,7 @@ function ProjectWorkspace({
     setTrelloBusy(true);
     setTrelloResult("");
     try {
-      const result = await api(`/api/projects/${project}/imports/trello`, {
+      const result = await workspaceApi(`/api/projects/${project}/imports/trello`, {
         method: "POST",
         body: JSON.stringify({ board_id: trelloBoard.trim() }),
       }, token);
@@ -1144,7 +1148,7 @@ function ProjectWorkspace({
   };
 
   const patchTaskEpic = async (taskId: number, epicId: number | null) => {
-    await api(`/api/tasks/${taskId}`, {
+    await workspaceApi(`/api/tasks/${taskId}`, {
       method: "PATCH",
       body: JSON.stringify({ epic_id: epicId }),
     }, token);
@@ -1153,7 +1157,7 @@ function ProjectWorkspace({
 
   const createTask = async () => {
     if (!newTitle.trim()) return;
-    await api(`/api/projects/${project}/tasks`, {
+    await workspaceApi(`/api/projects/${project}/tasks`, {
       method: "POST",
       body: JSON.stringify({ title: newTitle, status: "backlog" }),
     }, token);
@@ -1171,7 +1175,7 @@ function ProjectWorkspace({
     setBitrixBusy(true);
     setBitrixMessage("");
     try {
-      const result = await api(`/api/projects/${project}/imports/bitrix24`, {
+      const result = await workspaceApi(`/api/projects/${project}/imports/bitrix24`, {
         method: "POST",
         body: JSON.stringify({ group_id: groupId }),
       }, token);
@@ -1186,7 +1190,7 @@ function ProjectWorkspace({
 
   const newChat = async () => {
     if (!project) return;
-    const data = await api(`/api/projects/${project}/chats`, { method: "POST", body: "{}" }, token);
+    const data = await workspaceApi(`/api/projects/${project}/chats`, { method: "POST", body: "{}" }, token);
     await loadChats();
     setActiveChat(data.id);
   };
@@ -1206,7 +1210,7 @@ function ProjectWorkspace({
     }));
     let sent = false;
     try {
-      const data = await api(`/api/chats/${chatId}/messages`, {
+      const data = await workspaceApi(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
       }, token);
@@ -1274,7 +1278,7 @@ function ProjectWorkspace({
               <Plus /> Проект
             </Button>
           )}
-          {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} />}
+          {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} request={workspaceApi} />}
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"
             value={epicFilter}
@@ -1334,7 +1338,7 @@ function ProjectWorkspace({
           </div>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
-            <EmailNotifications token={token} request={api} />
+            <EmailNotifications token={token} request={workspaceApi} />
             <Button variant="ghost" size="sm" onClick={() => { saveToken(null); }}>Выйти</Button>
           </div>
         </div>
@@ -1347,7 +1351,7 @@ function ProjectWorkspace({
             <Button variant="ghost" size="sm" onClick={() => setAccessError(false)}>Закрыть</Button>
           </div>
         )}
-        {project && <ProjectMembers project={project} token={token} request={api} onMembersChanged={loadMembers} />}
+        {project && <ProjectMembers project={project} token={token} request={workspaceApi} onMembersChanged={loadMembers} />}
         {project && (
           <QuickSearch
             tasks={tasksProject === project ? tasks : []}
@@ -1439,7 +1443,7 @@ function ProjectWorkspace({
 
         {view === "dashboard" && (
           project
-            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} project={project} token={token} request={api} />
+            ? <ProjectDashboard load={loadDashboard} revision={tasks} epicsRevision={epics} project={project} token={token} request={workspaceApi} />
             : <p className="text-sm text-muted-foreground">Создай проект, чтобы увидеть сводку.</p>
         )}
 
@@ -1598,6 +1602,7 @@ function ProjectWorkspace({
           onOpen={setOpenTaskId}
           onClose={() => setOpenTaskId(null)}
           onChanged={loadTasks}
+          request={workspaceApi}
         />
       )}
     </div>
