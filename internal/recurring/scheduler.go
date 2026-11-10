@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"akhflow.ai/akhflow/internal/domain"
 	"akhflow.ai/akhflow/internal/events"
 	"akhflow.ai/akhflow/internal/store"
 )
@@ -59,37 +58,20 @@ func (s *Scheduler) TickOnce(ctx context.Context) {
 		return
 	}
 	for _, t := range tasks {
-		step, ok := domain.RecurrenceStep(t.Recurring)
-		if !ok || t.DueDate == nil {
-			continue
-		}
-		// advance master to the next future due date, skipping missed intervals
-		newDue := step(*t.DueDate)
-		for !newDue.After(now) {
-			newDue = step(newDue)
-		}
-		if err := s.Store.UpdateTask(ctx, t.ID, []string{"due_date"}, []any{newDue}); err != nil {
-			s.Logger.Printf("recurring: update master %d: %v", t.ID, err)
-			continue
-		}
-		// spawn a single occurrence for today
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		occ := t
-		d := today
-		occ.DueDate = &d
-		occ.Recurring = ""
-		occ.Status = domain.StatusTodo
-		id, err := s.Store.CreateTask(ctx, occ)
+		occ, err := s.Store.CreateScheduledOccurrence(ctx, t.ID, now)
 		if err != nil {
-			s.Logger.Printf("recurring: create: %v", err)
+			s.Logger.Printf("recurring: create occurrence for master %d: %v", t.ID, err)
 			continue
 		}
-		eid := id
-		if err := s.Store.Audit(ctx, "scheduler", "recur_task", "task", &eid, map[string]any{"master": t.ID, "due": today}); err != nil {
+		if occ == nil {
+			continue
+		}
+		eid := occ.ID
+		if err := s.Store.Audit(ctx, "scheduler", "recur_task", "task", &eid, map[string]any{"master": t.ID, "due": occ.DueDate}); err != nil {
 			s.Logger.Printf("recurring: audit: %v", err)
 		}
 		if s.Bus != nil {
-			s.Bus.Publish(events.Event{Type: "task_created", ProjectID: t.ProjectID, TaskID: id, Title: t.Title, Actor: "scheduler"})
+			s.Bus.Publish(events.Event{Type: "task_created", ProjectID: occ.ProjectID, TaskID: occ.ID, Title: occ.Title, Actor: "scheduler"})
 		}
 	}
 }
