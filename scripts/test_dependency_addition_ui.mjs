@@ -18,6 +18,7 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
 });
 let browser;
 let releaseAdd;
+const parallelAdds = new Map();
 
 try {
   let ready = false;
@@ -59,6 +60,10 @@ try {
       const id = request.postDataJSON().depends_on;
       writes.push(id);
       let result = mode;
+      if (result === "parallel") {
+        result = await new Promise((resolve) => parallelAdds.set(id, resolve));
+        parallelAdds.delete(id);
+      }
       if (result === "hold") {
         result = await new Promise((resolve) => { releaseAdd = resolve; });
       }
@@ -106,7 +111,7 @@ try {
   const add = page.locator(".fixed.inset-0.z-50").getByRole("button", { name: "Добавить", exact: true });
   const uncertain = page.getByRole("alert").filter({ hasText: "Не удалось подтвердить добавление зависимости" });
   const busy = page.getByRole("status").filter({ hasText: "Обновляем зависимости" });
-  const refresh = page.getByRole("button", { name: "Обновить связи", exact: true });
+  const refresh = page.getByRole("button", { name: /^Проверить связь #/ });
 
   mode = "hold";
   await select.selectOption("2");
@@ -169,6 +174,36 @@ try {
   assert.equal(await select.inputValue(), "4", "checking previous dependency erased the newer selection");
   assert.equal(writes.length, beforeAcceptedCheck, "confirmation check wrote another dependency");
   assert.equal(await page.getByRole("alert").count(), 0);
+
+  mode = "parallel";
+  // Reopen after removing an existing dependency to make two candidates available.
+  dependencies.splice(dependencies.findIndex((task) => task.id === 2), 1);
+  await page.getByRole("button", { name: "Закрыть карточку задачи", exact: true }).click();
+  await page.getByRole("button", { name: current.title, exact: true }).click();
+  await select.selectOption("2");
+  await add.click();
+  await select.selectOption("4");
+  await add.click();
+  for (let attempt = 0; attempt < 100 && parallelAdds.size < 2; attempt++) {
+    await delay(10);
+  }
+  assert.equal(parallelAdds.size, 2);
+  parallelAdds.get(4)("network");
+  await page.getByRole("alert").filter({ hasText: "Зависимость #4:" }).waitFor();
+  parallelAdds.get(2)("conflict");
+  const conflict2 = page.getByRole("alert").filter({ hasText: "Зависимость #2:" });
+  await conflict2.waitFor();
+  assert.equal(await page.getByRole("alert").count(), 2, "reverse responses lost an earlier error");
+  assert.equal(await select.inputValue(), "4", "parallel errors changed the selected dependency");
+  const writesBeforeChecks = writes.length;
+  await conflict2.getByRole("button", { name: "Проверить связь #2", exact: true }).click();
+  await conflict2.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("alert").filter({ hasText: "Зависимость #4:" }).count(), 1);
+  await page.getByRole("button", { name: "Проверить связь #4", exact: true }).click();
+  await uncertain.waitFor({ state: "hidden" });
+  assert.equal(writes.length, writesBeforeChecks, "checking individual failures repeated POST");
+  await page.getByRole("status").filter({ hasText: "Зависимость #2: Проверка завершена: зависимость отсутствует" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "Зависимость #4: Проверка завершена: зависимость отсутствует" }).waitFor();
 
   mode = "success";
   rejectRefresh = true;
