@@ -280,7 +280,10 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
       }
     } catch (e: any) {
       if (isCurrent()) {
-        setErr(e.message);
+        const message = e.message.startsWith("503:")
+          ? "Сервис временно недоступен. Попробуйте позже."
+          : e.message;
+        setErr(message);
       }
     }
   };
