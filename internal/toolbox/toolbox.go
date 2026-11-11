@@ -637,13 +637,6 @@ var Registry = []Tool{
 			if dep.ProjectID != t.ProjectID {
 				return Result{}, errors.New("dependency must be in the same project")
 			}
-			cycle, err := d.Store.WouldCreateCycle(ctx, id, depID)
-			if err != nil {
-				return Result{}, err
-			}
-			if cycle {
-				return Result{}, errors.New("dependency would create a cycle")
-			}
 			if err := d.Store.AddDependency(ctx, id, depID); err != nil {
 				return Result{}, err
 			}
