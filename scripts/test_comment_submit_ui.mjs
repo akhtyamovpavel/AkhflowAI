@@ -50,16 +50,16 @@ try {
     const path = new URL(request.url()).pathname;
     let data = [];
     if (path === "/api/projects") {
-      data = [{ id: 1, slug: "alpha", name: "Альфа" }];
+      data = [{ id: 1, slug: "alpha", name: "Альфа" }, { id: 2, slug: "beta", name: "Бета" }];
     } else if (path === "/api/projects/alpha/tasks") {
       data = [first, second];
     } else if (path === "/api/tasks/1/comments") {
       writes.push(request.postDataJSON().body);
-      if (mode === "delayed") {
+      if (mode === "delayed" || mode === "delayed-failure") {
         started();
         await new Promise((resolve) => { release = resolve; });
       }
-      if (mode === "failure") {
+      if (mode === "failure" || mode === "delayed-failure") {
         await route.fulfill({ status: 500, json: { error: "failure" } });
         return;
       }
@@ -89,6 +89,25 @@ try {
   await page.getByRole("button", { name: "#2 Задача Б" }).click();
   await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
   assert.equal(await input.inputValue(), "Второй");
+  assert.deepEqual(writes, ["Первый"]);
+  const chooseProject = async (name) => {
+    await page.evaluate((value) => {
+      const select = [...document.querySelectorAll("select")].find((item) => {
+        return [...item.options].some((option) => option.value === value);
+      });
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }, name);
+  };
+  await chooseProject("beta");
+  await page.getByText("Задача #1", { exact: true }).waitFor({ state: "hidden" });
+  await chooseProject("alpha");
+  await page.getByRole("button", { name: "Задача А", exact: true }).click();
+  assert.equal(await input.inputValue(), "Второй");
+  await input.fill("Изменённый черновик");
+  await input.fill("Второй");
+  await input.press("Enter");
+  assert.equal(await send.isDisabled(), true, "remount allowed a duplicate pending POST");
   assert.deepEqual(writes, ["Первый"]);
   mode = "success";
   release();
@@ -120,6 +139,19 @@ try {
   await page.getByRole("alert").getByText("Комментарий отправлен, но обновить список не удалось.").waitFor();
   assert.equal(await input.inputValue(), "");
   assert.deepEqual(writes, ["Первый", "Второй", "Второй", "Третий"]);
+  mode = "delayed-failure";
+  await input.fill("Запрос со сбоем");
+  const failedRequest = new Promise((resolve) => { started = resolve; });
+  await input.press("Enter");
+  await failedRequest;
+  await chooseProject("beta");
+  await page.getByText("Задача #1", { exact: true }).waitFor({ state: "hidden" });
+  await chooseProject("alpha");
+  await page.getByRole("button", { name: "Задача А", exact: true }).click();
+  await input.fill("Текст после возврата");
+  release();
+  await page.getByRole("alert").getByText("Не удалось подтвердить отправку. Проверь список комментариев перед повтором.").waitFor();
+  assert.equal(await input.inputValue(), "Текст после возврата", "late failure lost the new draft");
   assert.deepEqual(pageErrors, []);
   console.log("PASS: comments preserve new input, prevent duplicate pending writes and isolate drafts");
 } finally {

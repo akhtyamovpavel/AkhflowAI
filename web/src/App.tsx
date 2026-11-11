@@ -455,7 +455,30 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
 
 const taskTitleDrafts = new Map<string, string>();
 const taskTitleWrites = new Map<string, Promise<unknown>>();
-const taskCommentDrafts = new Map<string, string>();
+type CommentDraft = {
+  value: string;
+  revision: number;
+  generation: number;
+  pending: boolean;
+  error: string;
+  listeners: Set<(refresh: boolean) => void>;
+};
+const taskCommentDrafts = new Map<string, CommentDraft>();
+
+function commentDraftFor(key: string): CommentDraft {
+  let draft = taskCommentDrafts.get(key);
+  if (!draft) {
+    draft = { value: "", revision: 0, generation: 0, pending: false, error: "", listeners: new Set() };
+    taskCommentDrafts.set(key, draft);
+  }
+  return draft;
+}
+
+function notifyCommentDraft(draft: CommentDraft, refresh = false) {
+  for (const listener of draft.listeners) {
+    listener(refresh);
+  }
+}
 
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
@@ -490,11 +513,10 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const descriptionSaving = useRef(false);
   const [descriptionError, setDescriptionError] = useState("");
   const [descriptionRefreshFailed, setDescriptionRefreshFailed] = useState(false);
-  const [comment, setComment] = useState(taskCommentDrafts.get(draftKey) ?? "");
-  const commentRevision = useRef(0);
-  const commentSending = useRef(false);
-  const [sendingComment, setSendingComment] = useState(false);
-  const [commentError, setCommentError] = useState("");
+  const commentDraft = commentDraftFor(draftKey);
+  const [comment, setComment] = useState(commentDraft.value);
+  const [sendingComment, setSendingComment] = useState(commentDraft.pending);
+  const [commentError, setCommentError] = useState(commentDraft.error);
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
@@ -525,6 +547,26 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const update = (refresh: boolean) => {
+      setComment(commentDraft.value);
+      setSendingComment(commentDraft.pending);
+      setCommentError(commentDraft.error);
+      if (refresh) {
+        const generation = commentDraft.generation;
+        void load().catch(() => {
+          if (commentDraft.generation === generation) {
+            commentDraft.error = "Комментарий отправлен, но обновить список не удалось.";
+            notifyCommentDraft(commentDraft);
+          }
+        });
+      }
+    };
+    commentDraft.listeners.add(update);
+    update(false);
+    return () => { commentDraft.listeners.delete(update); };
+  }, [commentDraft, load]);
 
   if (!task) return null;
 
@@ -614,7 +656,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const canLeave = () => {
-    if (descriptionSaving.current || commentSending.current) return false;
+    if (descriptionSaving.current || commentDraft.pending) return false;
     if (description.current.value !== description.current.saved) {
       return window.confirm("Описание не сохранено. Закрыть карточку и потерять изменения?");
     }
@@ -634,31 +676,27 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const addComment = async () => {
-    if (commentSending.current || !comment.trim()) return;
-    const body = comment.trim();
-    const revision = commentRevision.current;
-    commentSending.current = true;
-    setSendingComment(true);
-    setCommentError("");
+    if (commentDraft.pending || !commentDraft.value.trim()) return;
+    const body = commentDraft.value.trim();
+    const revision = commentDraft.revision;
+    commentDraft.generation++;
+    commentDraft.pending = true;
+    commentDraft.error = "";
+    notifyCommentDraft(commentDraft);
     try {
       await request(`/api/tasks/${taskId}/comments`, {
         method: "POST",
         body: JSON.stringify({ body }),
       }, token);
-      if (commentRevision.current === revision) {
-        taskCommentDrafts.delete(draftKey);
-        setComment("");
+      if (commentDraft.revision === revision) {
+        commentDraft.value = "";
       }
-      try {
-        await load();
-      } catch {
-        setCommentError("Комментарий отправлен, но обновить список не удалось.");
-      }
+      commentDraft.pending = false;
+      notifyCommentDraft(commentDraft, true);
     } catch {
-      setCommentError("Не удалось подтвердить отправку. Проверь список комментариев перед повтором.");
-    } finally {
-      commentSending.current = false;
-      setSendingComment(false);
+      commentDraft.pending = false;
+      commentDraft.error = "Не удалось подтвердить отправку. Проверь список комментариев перед повтором.";
+      notifyCommentDraft(commentDraft);
     }
   };
 
@@ -901,13 +939,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
                 value={comment}
                 onChange={(e) => {
                   const value = e.target.value;
-                  commentRevision.current++;
-                  if (value) {
-                    taskCommentDrafts.set(draftKey, value);
-                  } else {
-                    taskCommentDrafts.delete(draftKey);
-                  }
-                  setComment(value);
+                  commentDraft.revision++;
+                  commentDraft.value = value;
+                  notifyCommentDraft(commentDraft);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.nativeEvent.isComposing) {
