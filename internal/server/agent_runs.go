@@ -241,7 +241,17 @@ func (s *Server) executeRun(parent context.Context, run *store.AgentRun, token s
 		}
 		return err
 	}
-	result, err := agent.Run(ctx, run.Message, project.Slug, history)
+	snapshot, err := s.Store.TaskRunSnapshot(ctx, run.ID)
+	if err != nil {
+		s.finishRun(run, token, "failed", "task_context_unavailable", nil)
+		return
+	}
+	prompt, err := taskRunPrompt(snapshot, run.Message)
+	if err != nil {
+		s.finishRun(run, token, "failed", "task_context_unavailable", nil)
+		return
+	}
+	result, err := agent.Run(ctx, prompt, project.Slug, history)
 	if err != nil {
 		checkCtx, stopCheck := context.WithTimeout(context.Background(), 5*time.Second)
 		current, checkErr := s.Store.AgentRun(checkCtx, run.ID)
