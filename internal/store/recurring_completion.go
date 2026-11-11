@@ -54,9 +54,9 @@ func (s *Store) UpdateTaskWithRecurrence(ctx context.Context, id int64, sets []s
 			}
 		}
 		var nextID int64
-		err = tx.QueryRow(ctx, `INSERT INTO tasks(project_id, parent_id, title, description, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-			task.ProjectID, task.ParentID, task.Title, task.Description, domain.StatusTodo, task.Priority, task.EstimateMin, due, task.AuthorID, task.AssigneeID, task.Recurring, task.EpicID).Scan(&nextID)
+		err = tx.QueryRow(ctx, `INSERT INTO tasks(project_id, parent_id, title, description, acceptance_criteria, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+			task.ProjectID, task.ParentID, task.Title, task.Description, task.AcceptanceCriteria, domain.StatusTodo, task.Priority, task.EstimateMin, due, task.AuthorID, task.AssigneeID, task.Recurring, task.EpicID).Scan(&nextID)
 		if err != nil {
 			return TaskTransition{}, err
 		}

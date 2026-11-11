@@ -11,9 +11,10 @@ import (
 var ErrTaskRunAccess = errors.New("task access denied")
 
 type TaskRunSnapshot struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	ID                 int64  `json:"id"`
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	AcceptanceCriteria string `json:"acceptance_criteria"`
 }
 
 func (s *Store) EnqueueTaskRun(ctx context.Context, taskID, actorID int64, key, message string) (*AgentRun, error) {
@@ -27,7 +28,7 @@ func (s *Store) EnqueueTaskRun(ctx context.Context, taskID, actorID int64, key, 
 	}
 	var snapshot TaskRunSnapshot
 	var projectID int64
-	err = tx.QueryRow(ctx, `SELECT id,project_id,title,description FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&snapshot.ID, &projectID, &snapshot.Title, &snapshot.Description)
+	err = tx.QueryRow(ctx, `SELECT id,project_id,title,description,acceptance_criteria FROM tasks WHERE id=$1 FOR UPDATE`, taskID).Scan(&snapshot.ID, &projectID, &snapshot.Title, &snapshot.Description, &snapshot.AcceptanceCriteria)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

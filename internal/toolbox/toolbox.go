@@ -197,15 +197,16 @@ var Registry = []Tool{
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"project":     map[string]any{"type": "string", "description": "Project space slug"},
-				"title":       map[string]any{"type": "string"},
-				"description": map[string]any{"type": "string"},
-				"status":      map[string]any{"type": "string", "enum": domain.Statuses},
-				"priority":    map[string]any{"type": "string", "enum": domain.Priorities},
-				"due_date":    map[string]any{"type": "string", "format": "date", "description": "YYYY-MM-DD"},
-				"assignee":    map[string]any{"type": "string", "description": "Assignee email"},
-				"labels":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"recurring":   map[string]any{"type": "string", "enum": append(domain.RecurringSpecs, ""), "description": "daily, weekly or monthly"},
+				"project":             map[string]any{"type": "string", "description": "Project space slug"},
+				"title":               map[string]any{"type": "string"},
+				"description":         map[string]any{"type": "string"},
+				"acceptance_criteria": map[string]any{"type": "string"},
+				"status":              map[string]any{"type": "string", "enum": domain.Statuses},
+				"priority":            map[string]any{"type": "string", "enum": domain.Priorities},
+				"due_date":            map[string]any{"type": "string", "format": "date", "description": "YYYY-MM-DD"},
+				"assignee":            map[string]any{"type": "string", "description": "Assignee email"},
+				"labels":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"recurring":           map[string]any{"type": "string", "enum": append(domain.RecurringSpecs, ""), "description": "daily, weekly or monthly"},
 			},
 			"required": []string{"project", "title"},
 		},
@@ -222,14 +223,23 @@ var Registry = []Tool{
 			if title == "" {
 				return Result{}, errors.New("title is required")
 			}
+			criteria := ""
+			if raw, exists := v["acceptance_criteria"]; exists {
+				value, ok := raw.(string)
+				if !ok || !domain.ValidAcceptanceCriteria(value) {
+					return Result{}, errors.New("invalid acceptance criteria")
+				}
+				criteria = value
+			}
 			t := domain.Task{
-				ProjectID:   p.ID,
-				Title:       title,
-				Description: str(v, "description"),
-				Status:      domain.StatusTodo,
-				Priority:    domain.PriorityMedium,
-				AuthorID:    d.ActorID,
-				DueDate:     datePtr(v, "due_date"),
+				ProjectID:          p.ID,
+				Title:              title,
+				Description:        str(v, "description"),
+				AcceptanceCriteria: criteria,
+				Status:             domain.StatusTodo,
+				Priority:           domain.PriorityMedium,
+				AuthorID:           d.ActorID,
+				DueDate:            datePtr(v, "due_date"),
 			}
 			if s := str(v, "status"); s != "" {
 				if !validStatus(s) {

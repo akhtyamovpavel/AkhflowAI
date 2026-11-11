@@ -70,25 +70,26 @@ func RecurrenceStep(spec string) (func(time.Time) time.Time, bool) {
 }
 
 type Task struct {
-	ID          int64       `json:"id"`
-	ProjectID   int64       `json:"project_id"`
-	ParentID    *int64      `json:"parent_id,omitempty"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	Status      string      `json:"status"`
-	Priority    string      `json:"priority"`
-	EstimateMin *int        `json:"estimate_min,omitempty"`
-	DueDate     *time.Time  `json:"due_date,omitempty"`
-	AuthorID    int64       `json:"author_id"`
-	AssigneeID  *int64      `json:"assignee_id,omitempty"`
-	Recurring   string      `json:"recurring,omitempty"`
-	EpicID      *int64      `json:"epic_id,omitempty"`
-	Labels      []string    `json:"labels,omitempty"`
-	DependsOn   []int64     `json:"depends_on,omitempty"`
-	Blocks      []int64     `json:"blocks,omitempty"`
-	Attachment  *Attachment `json:"attachment,omitempty"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+	ID                 int64       `json:"id"`
+	ProjectID          int64       `json:"project_id"`
+	ParentID           *int64      `json:"parent_id,omitempty"`
+	Title              string      `json:"title"`
+	Description        string      `json:"description"`
+	AcceptanceCriteria string      `json:"acceptance_criteria"`
+	Status             string      `json:"status"`
+	Priority           string      `json:"priority"`
+	EstimateMin        *int        `json:"estimate_min,omitempty"`
+	DueDate            *time.Time  `json:"due_date,omitempty"`
+	AuthorID           int64       `json:"author_id"`
+	AssigneeID         *int64      `json:"assignee_id,omitempty"`
+	Recurring          string      `json:"recurring,omitempty"`
+	EpicID             *int64      `json:"epic_id,omitempty"`
+	Labels             []string    `json:"labels,omitempty"`
+	DependsOn          []int64     `json:"depends_on,omitempty"`
+	Blocks             []int64     `json:"blocks,omitempty"`
+	Attachment         *Attachment `json:"attachment,omitempty"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
 }
 
 type Comment struct {

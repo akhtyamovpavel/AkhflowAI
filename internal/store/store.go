@@ -279,14 +279,14 @@ func (s *Store) scanProject(row pgx.Row) (*domain.Project, error) {
 
 // ---------- tasks ----------
 
-const taskCols = `id, project_id, parent_id, title, description, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id, created_at, updated_at`
+const taskCols = `id, project_id, parent_id, title, description, acceptance_criteria, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id, created_at, updated_at`
 
 func (s *Store) CreateTask(ctx context.Context, t domain.Task) (int64, error) {
 	var id int64
 	err := s.db.QueryRow(ctx, `
-		INSERT INTO tasks(project_id, parent_id, title, description, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-		t.ProjectID, t.ParentID, t.Title, t.Description, t.Status, t.Priority, t.EstimateMin, t.DueDate, t.AuthorID, t.AssigneeID, t.Recurring, t.EpicID).Scan(&id)
+		INSERT INTO tasks(project_id, parent_id, title, description, acceptance_criteria, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		t.ProjectID, t.ParentID, t.Title, t.Description, t.AcceptanceCriteria, t.Status, t.Priority, t.EstimateMin, t.DueDate, t.AuthorID, t.AssigneeID, t.Recurring, t.EpicID).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -384,7 +384,7 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]domain
 
 func (s *Store) scanTask(row pgx.Row) (*domain.Task, error) {
 	var t domain.Task
-	if err := row.Scan(&t.ID, &t.ProjectID, &t.ParentID, &t.Title, &t.Description, &t.Status, &t.Priority, &t.EstimateMin, &t.DueDate, &t.AuthorID, &t.AssigneeID, &t.Recurring, &t.EpicID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.ProjectID, &t.ParentID, &t.Title, &t.Description, &t.AcceptanceCriteria, &t.Status, &t.Priority, &t.EstimateMin, &t.DueDate, &t.AuthorID, &t.AssigneeID, &t.Recurring, &t.EpicID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &t, nil
