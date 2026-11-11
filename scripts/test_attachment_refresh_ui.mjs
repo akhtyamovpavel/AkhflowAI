@@ -28,6 +28,8 @@ let holdNextList = true;
 let failNextList = false;
 let held;
 const heldRoutes = new Set();
+const initialRoutes = new Map();
+let delayedInitials = 0;
 let browser;
 const pageErrors = [];
 
@@ -51,6 +53,19 @@ try {
   await page.addInitScript(() => {
     localStorage.setItem("akhflow.token", "fixture-token");
     localStorage.setItem("akhflow.project", "alpha");
+    const originalFetch = window.fetch;
+    let nextRequest = 0;
+    window.fetch = (input, options = {}) => {
+      const path = typeof input === "string" ? input : input.url;
+      if (path.endsWith("/api/tasks/1/attachments") && options.signal && !options.method) {
+        const id = ++nextRequest;
+        const headers = new Headers(options.headers);
+        headers.set("X-Fixture-Request", String(id));
+        window.activeAttachmentRequest = { id, signal: options.signal };
+        return originalFetch(input, { ...options, headers });
+      }
+      return originalFetch(input, options);
+    };
   });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -76,7 +91,14 @@ try {
     } else if (path === "/api/tasks/1/attachments") {
       if (holdNextList) {
         const snapshot = structuredClone(attachments);
-        held = { route, snapshot };
+        const id = Number(request.headers()["x-fixture-request"]);
+        // StrictMode cancels the first request; force the live one to arrive later.
+        if (id % 2 === 0) {
+          delayedInitials++;
+          await delay(150);
+        }
+        const entry = { route, snapshot };
+        initialRoutes.set(id, entry);
         heldRoutes.add(route);
         return;
       }
@@ -99,10 +121,18 @@ try {
   };
   const open = async () => {
     await page.getByRole("button", { name: "Task 1", exact: true }).click();
-    for (let attempt = 0; attempt < 100 && !held; attempt++) {
+    await section.getByRole("button", { name: "Загрузить", exact: true }).waitFor();
+    const active = await page.evaluate(() => {
+      const request = window.activeAttachmentRequest;
+      return request && !request.signal.aborted ? request.id : null;
+    });
+    assert.ok(active, "active attachment GET did not start");
+    for (let attempt = 0; attempt < 500 && !held; attempt++) {
+      held = initialRoutes.get(active);
+      if (held) break;
       await delay(10);
     }
-    assert.ok(held, "initial attachment GET did not start");
+    assert.ok(held, "active attachment GET was not intercepted");
   };
   const release = async (status = 200) => {
     const current = held;
@@ -154,6 +184,7 @@ try {
   await release(500);
   assert.equal(await section.getByRole("button", { name: "second-task.txt (2 байт)", exact: true }).count(), 1);
   assert.equal(await section.getByRole("alert").count(), 0, "previous task failure affected the selected task");
+  assert.ok(delayedInitials > 0, "the live initial request was never delayed");
   assert.deepEqual(pageErrors, []);
   console.log("PASS: attachment refresh ignores stale success and failure responses and isolates tasks");
 } finally {
