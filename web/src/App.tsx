@@ -1263,7 +1263,7 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
               ))}
             </div>
           </div>
-          {token && <TaskAgentRuns taskId={taskId} token={token} request={request} onChanged={onChanged} onOpenChat={onOpenChat} />}
+          {token && <TaskAgentRuns taskId={taskId} project={project} token={token} request={request} onChanged={onChanged} onOpenChat={onOpenChat} />}
         </div>
       </div>
     </div>
