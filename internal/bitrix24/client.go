@@ -125,7 +125,10 @@ func (c Client) Fetch(ctx context.Context, groupID int64) (string, []Task, error
 			case "6":
 				task.Status = domain.StatusBacklog
 			}
-			if value(item.Priority) == "2" {
+			switch value(item.Priority) {
+			case "0":
+				task.Priority = domain.PriorityLow
+			case "2":
 				task.Priority = domain.PriorityHigh
 			}
 			if item.Deadline != "" {

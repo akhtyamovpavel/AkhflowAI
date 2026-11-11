@@ -47,6 +47,50 @@ func TestFetchPagesAndMapping(t *testing.T) {
 	}
 }
 
+func TestFetchPriorityMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		priority json.RawMessage
+		want     string
+	}{
+		{"string-low", json.RawMessage(`"0"`), "low"},
+		{"number-low", json.RawMessage(`0`), "low"},
+		{"string-medium", json.RawMessage(`"1"`), "medium"},
+		{"number-medium", json.RawMessage(`1`), "medium"},
+		{"string-high", json.RawMessage(`"2"`), "high"},
+		{"number-high", json.RawMessage(`2`), "high"},
+		{"missing", nil, "medium"},
+		{"null", json.RawMessage(`null`), "medium"},
+		{"unknown-string", json.RawMessage(`"unexpected"`), "medium"},
+		{"unknown-number", json.RawMessage(`9`), "medium"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				task := map[string]any{"id": "1", "title": "Task"}
+				if tc.priority != nil {
+					task["priority"] = tc.priority
+				}
+				response := map[string]any{"result": map[string]any{"tasks": []any{task}}}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			client := Client{URL: server.URL, HTTP: server.Client()}
+			_, tasks, err := client.Fetch(context.Background(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tasks) != 1 {
+				t.Fatalf("got %d tasks, want 1", len(tasks))
+			}
+			if tasks[0].Priority != tc.want {
+				t.Fatalf("priority=%q, want %q", tasks[0].Priority, tc.want)
+			}
+		})
+	}
+}
+
 func TestFetchConcurrentDeletionAndInsertion(t *testing.T) {
 	ids := make([]int, 102)
 	for i := range ids {
