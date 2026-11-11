@@ -78,19 +78,25 @@ try {
   await page.goto(url);
   const error = page.getByRole("alert").filter({ hasText: "Не удалось загрузить проекты" });
   const retry = page.getByRole("button", { name: "Повторить" });
+  const taskInput = page.getByPlaceholder("Новая задача...");
   await error.waitFor();
+  assert.equal(await taskInput.isDisabled(), true, "task entry must wait for a selected project");
   assert.equal(await page.evaluate(() => localStorage.getItem("akhflow.token")), "fixture-a");
 
   await page.evaluate(() => { window.projectMode = "hold"; });
   await retry.click();
   await page.waitForFunction(() => window.pendingProjects.length === 1);
   await retry.isDisabled().then((disabled) => assert.ok(disabled, "retry must be disabled while loading"));
+  assert.equal(await taskInput.isDisabled(), true, "task entry must stay disabled during retry");
   await page.evaluate(() => window.pendingProjects.shift().release(503));
   await retry.waitFor({ state: "visible" });
   await page.waitForFunction(() => !document.querySelector('[role="alert"] button')?.disabled);
   await page.evaluate(() => { window.projectMode = "success"; });
   await retry.click();
   await page.locator("header select").first().locator("option", { hasText: "Alpha" }).waitFor({ state: "attached" });
+  await page.waitForFunction(() => !document.querySelector('input[placeholder="Новая задача..."]')?.disabled);
+  await taskInput.fill("Draft after recovery");
+  assert.equal(await taskInput.inputValue(), "Draft after recovery");
   assert.equal(await error.count(), 0, "successful retry must clear error");
   assert.equal(await page.evaluate(() => localStorage.getItem("akhflow.token")), "fixture-a");
 
