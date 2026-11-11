@@ -2151,6 +2151,7 @@ function ProjectWorkspace({
       const data = await workspaceApi(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
+        headers: { "Idempotency-Key": operation.id },
         signal: controller.signal,
       }, token, 200);
       if (!isCompletedAgentResponse(data)) throw new Error("invalid agent response");

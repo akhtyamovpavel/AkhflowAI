@@ -67,6 +67,13 @@ try {
       data = [{ id: 1, title: "Первый чат" }, { id: 2, title: "Второй чат" }];
     } else if (path === "/api/chats/1/messages" && request.method() === "POST") {
       posts++;
+      const key = request.headers()["idempotency-key"];
+      assert.match(key ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      const savedKey = await page.evaluate(() => {
+        const marker = Object.keys(sessionStorage).find((name) => name.includes("akhflow.pendingAgentMessage") && !name.endsWith(".acknowledged"));
+        return marker ? JSON.parse(sessionStorage.getItem(marker)).id : null;
+      });
+      assert.equal(key, savedKey, "request must use the durable marker as its key");
       if (posts === 1) {
         const markerExists = await page.evaluate(() => {
           return Object.keys(sessionStorage).some((key) => key.includes("akhflow.pendingAgentMessage"));
@@ -215,6 +222,7 @@ try {
     { status: 200, json: { reply: "ok", tool_calls: null } },
     { status: 200, body: "{broken", contentType: "application/json" },
     { status: 202, json: { reply: "ещё выполняется", tool_calls: null, iterations: 1 } },
+    { status: 202, json: { status: "pending_or_unknown" } },
     { status: 200, json: { reply: "ok", tool_calls: null, iterations: 1, error: "partial" } },
   ];
   for (const response of malformedResponses) {

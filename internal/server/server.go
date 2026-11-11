@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1091,6 +1092,11 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message required"})
 		return
 	}
+	keys := r.Header.Values("Idempotency-Key")
+	if len(keys) > 1 || (len(keys) == 1 && !chatCreationKeyPattern.MatchString(keys[0])) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid idempotency key"})
+		return
+	}
 	// load history BEFORE appending the new message so the current prompt
 	// is not duplicated in the context
 	historyMsgs, err := s.Store.MessagesOfChat(r.Context(), chat.ID)
@@ -1109,12 +1115,32 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if len(history) > maxChatHistory {
 		history = history[len(history)-maxChatHistory:]
 	}
-	if _, err := s.Store.AddAgentMessage(r.Context(), chat.ID, "user", req.Message, nil); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if chat.Title == "" {
-		s.Store.SetChatTitle(r.Context(), chat.ID, truncate(req.Message, 60))
+	if len(keys) == 1 {
+		claimed, result, err := s.Store.ClaimAgentMessage(r.Context(), chat.ID, uid, keys[0], req.Message, truncate(req.Message, 60))
+		if errors.Is(err, store.ErrAgentRequestConflict) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "idempotency key already used with another message"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not record agent request"})
+			return
+		}
+		if !claimed {
+			if result == nil {
+				writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending_or_unknown"})
+			} else {
+				writeJSON(w, http.StatusOK, result)
+			}
+			return
+		}
+	} else {
+		if _, err := s.Store.AddAgentMessage(r.Context(), chat.ID, "user", req.Message, nil); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if chat.Title == "" {
+			s.Store.SetChatTitle(r.Context(), chat.ID, truncate(req.Message, 60))
+		}
 	}
 	p, err := s.Store.ProjectByID(r.Context(), chat.ProjectID)
 	if err != nil || p == nil {
@@ -1140,7 +1166,14 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if _, err := s.Store.AddAgentMessage(r.Context(), chat.ID, "agent", result.Reply, result.ToolCalls); err != nil {
+	if len(keys) == 1 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err = s.Store.FinishAgentMessage(ctx, chat.ID, uid, keys[0], result.Reply, result.ToolCalls, result)
+	} else {
+		_, err = s.Store.AddAgentMessage(r.Context(), chat.ID, "agent", result.Reply, result.ToolCalls)
+	}
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
