@@ -480,6 +480,12 @@ function notifyCommentDraft(draft: CommentDraft, refresh = false) {
   }
 }
 
+type DependencyRemoval = {
+  sourceId: number;
+  depId: number;
+  confirmed: boolean;
+};
+
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
   project: string;
@@ -526,7 +532,10 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [refreshingDependencies, setRefreshingDependencies] = useState(false);
   const addingDependency = pendingDependencyCount > 0 || refreshingDependencies;
   const [dependencyError, setDependencyError] = useState("");
+  const [dependencyRemovalStatus, setDependencyRemovalStatus] = useState("");
+  const [dependencyRemoval, setDependencyRemoval] = useState<DependencyRemoval | null>(null);
   const [removingDependency, setRemovingDependency] = useState(false);
+  const dependencyRemovalPending = useRef(false);
   const detailRequest = useRef(0);
 
   const load = useCallback(async () => {
@@ -795,16 +804,62 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   };
 
+  const refreshDependencyRemoval = async (target: DependencyRemoval) => {
+    const results = await Promise.allSettled([load(), Promise.resolve().then(onChanged)]);
+    const detail = results[0];
+    if (detail.status === "rejected" || !detail.value || results[1].status === "rejected") {
+      const message = target.confirmed
+        ? "Связь удалена, но обновить данные не удалось. Повтори проверку."
+        : "Не удалось обновить данные о связях. Проверь связи перед повторным удалением.";
+      setDependencyError(message);
+      return;
+    }
+    const data = detail.value;
+    const links = target.sourceId === taskId ? data.dependencies : data.blocks;
+    const linkedTask = target.sourceId === taskId ? target.depId : target.sourceId;
+    const present = (links ?? []).some((dependency: Task) => dependency.id === linkedTask);
+    const message = present
+      ? "Проверка завершена: связь присутствует. Можно повторить удаление."
+      : "Проверка завершена: связь отсутствует.";
+    setDependencyRemovalStatus(message);
+    setDependencyError("");
+    setDependencyRemoval(null);
+  };
+
+  const checkDependencyRemoval = async () => {
+    if (!dependencyRemoval || dependencyRemovalPending.current) return;
+    dependencyRemovalPending.current = true;
+    setRemovingDependency(true);
+    try {
+      await refreshDependencyRemoval(dependencyRemoval);
+    } finally {
+      dependencyRemovalPending.current = false;
+      setRemovingDependency(false);
+    }
+  };
+
   const removeDep = async (sourceId: number, depId: number) => {
+    if (dependencyRemovalPending.current || dependencyRemoval) return;
+    const target = { sourceId, depId, confirmed: false };
+    dependencyRemovalPending.current = true;
+    setDependencyRemoval(target);
+    setDependencyRemovalStatus("");
     setDependencyError("");
     setRemovingDependency(true);
     try {
       await request(`/api/tasks/${sourceId}/dependencies/${depId}`, { method: "DELETE" }, token);
-      await load();
-      onChanged();
     } catch {
-      setDependencyError("Не удалось удалить связь. Обнови карточку и попробуй снова.");
+      setDependencyError("Не удалось подтвердить удаление связи. Проверь связи перед повторным удалением.");
+      dependencyRemovalPending.current = false;
+      setRemovingDependency(false);
+      return;
+    }
+    const confirmed = { ...target, confirmed: true };
+    setDependencyRemoval(confirmed);
+    try {
+      await refreshDependencyRemoval(confirmed);
     } finally {
+      dependencyRemovalPending.current = false;
       setRemovingDependency(false);
     }
   };
@@ -821,7 +876,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
         size="sm"
         variant="ghost"
         aria-label={`Удалить связь с задачей #${d.id}: ${d.title}`}
-        disabled={removingDependency}
+        disabled={removingDependency || dependencyRemoval !== null}
         onClick={() => {
           if (direction === "depends") {
             void removeDep(taskId, d.id);
@@ -976,7 +1031,13 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>
-            {dependencyError && <p role="alert" className="text-sm text-destructive">{dependencyError}</p>}
+            {dependencyError && (
+              <div role="alert" className="text-sm text-destructive">
+                {dependencyError}
+                <Button size="sm" variant="ghost" disabled={removingDependency} onClick={() => void checkDependencyRemoval()}>Проверить удаление связи</Button>
+              </div>
+            )}
+            {dependencyRemovalStatus && <p role="status" className="text-sm">{dependencyRemovalStatus}</p>}
             {Object.entries(dependencyAddResults).map(([id, result]) => (
               <div key={id} role={result.checked ? "status" : "alert"} className="text-sm">
                 <p>Зависимость #{id}: {result.message}</p>
