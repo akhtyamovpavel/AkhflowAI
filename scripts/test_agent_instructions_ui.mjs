@@ -34,6 +34,10 @@ try {
   let saved = { instructions: "Исходные правила", version: 1, updated_at: null };
   let fail = false;
   const writes = [];
+  let hold = false;
+  let release;
+  let started;
+  let pending = new Promise((resolve) => { started = resolve; });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -44,6 +48,10 @@ try {
       if (request.method() === "PUT") {
         const input = request.postDataJSON();
         writes.push(input);
+        if (hold) {
+          started();
+          await new Promise((resolve) => { release = resolve; });
+        }
         if (fail) {
           await route.fulfill({ status: 503, json: {} });
           return;
@@ -69,6 +77,8 @@ try {
   await dialog.getByRole("button", { name: "Сохранить" }).click();
   await dialog.getByText("Инструкции изменились", { exact: false }).waitFor();
   assert.equal(await input.inputValue(), "Мой черновик");
+  assert.equal(await dialog.getByRole("button", { name: "Сохранить" }).isDisabled(), true);
+  assert.equal(writes.length, 1, "conflict must block retry before explicit refresh");
   await dialog.getByRole("button", { name: "Загрузить актуальную версию" }).click();
   await dialog.getByText("Параллельные правила").waitFor();
   assert.equal(await input.inputValue(), "Мой черновик");
@@ -79,7 +89,15 @@ try {
   await dialog.getByText("Не удалось подтвердить сохранение", { exact: false }).waitFor();
   assert.equal(await input.inputValue(), "Мой черновик");
   fail = false;
+  hold = true;
   await dialog.getByRole("button", { name: "Сохранить" }).click();
+  await pending;
+  assert.equal(await input.getAttribute("readonly"), "", "editing must be blocked during save");
+  await input.focus();
+  await page.keyboard.type(" не сохраняется");
+  assert.equal(await input.inputValue(), "Мой черновик");
+  hold = false;
+  release();
   await dialog.getByText("Инструкции сохранены.").waitFor();
   assert.equal(writes.at(-1).version, 2);
   assert.equal(saved.instructions, "Мой черновик");

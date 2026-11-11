@@ -18,6 +18,7 @@ export function AgentInstructions({ project, token, request }: { project: string
   const [version, setVersion] = useState<number | null>(null);
   const [latest, setLatest] = useState<Instructions | null>(null);
   const [message, setMessage] = useState("");
+  const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const active = useRef(true);
@@ -96,6 +97,7 @@ export function AgentInstructions({ project, token, request }: { project: string
     } catch (error) {
       if (!current() || signal.signal.aborted) return;
       if (error instanceof Error && error.message.startsWith("409:")) {
+        setConflict(true);
         setMessage("Инструкции изменились. Загрузи актуальную версию и сравни её с черновиком.");
       } else {
         setMessage("Не удалось подтвердить сохранение. Черновик сохранён; загрузи актуальную версию перед повтором.");
@@ -119,7 +121,7 @@ export function AgentInstructions({ project, token, request }: { project: string
             <h2 id="agent-instructions-title" className="font-semibold">Инструкции агента</h2>
             <p className="text-sm text-muted-foreground">Инструкции применяются к новым запускам агента в проекте.</p>
             <label htmlFor="agent-instructions-text" className="text-sm">Текст инструкций</label>
-            <textarea id="agent-instructions-text" className="min-h-40 w-full rounded-md border bg-background p-2 text-sm" value={draft} readOnly={!canWrite} onChange={(event) => setDraft(event.target.value)} />
+            <textarea id="agent-instructions-text" className="min-h-40 w-full rounded-md border bg-background p-2 text-sm" value={draft} readOnly={!canWrite || busy} onChange={(event) => setDraft(event.target.value)} />
             {message && <p role="status" className="text-sm">{message}</p>}
             {version === null && <Button size="sm" variant="outline" disabled={busy} onClick={() => void load(true)}>Повторить загрузку</Button>}
             {version !== null && canWrite && <Button size="sm" variant="outline" disabled={busy} onClick={() => void load(false)}>Загрузить актуальную версию</Button>}
@@ -129,13 +131,14 @@ export function AgentInstructions({ project, token, request }: { project: string
                 <p className="whitespace-pre-wrap text-sm">{latest.instructions || "Инструкции пусты"}</p>
                 <Button size="sm" variant="outline" onClick={() => {
                   setVersion(latest.version);
+                  setConflict(false);
                   setLatest(null);
                   setMessage("Актуальная версия выбрана. Черновик сохранён; проверь его перед сохранением.");
                 }}>Использовать версию для черновика</Button>
               </div>
             )}
             <div className="flex gap-2">
-              {canWrite && <Button size="sm" disabled={busy || version === null || latest !== null} onClick={() => void save()}>Сохранить</Button>}
+              {canWrite && <Button size="sm" disabled={busy || conflict || version === null || latest !== null} onClick={() => void save()}>Сохранить</Button>}
               <Button size="sm" variant="outline" onClick={() => setOpen(false)}>Закрыть</Button>
             </div>
           </div>
