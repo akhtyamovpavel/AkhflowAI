@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ type Server struct {
 
 // maxChatHistory caps how many previous turns are fed into the agent context.
 const maxChatHistory = 20
+
+var chatCreationKeyPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func New(st *store.Store, auth *Auth, llmClient *llm.Client, bus *events.Bus) *Server {
 	return &Server{Auth: auth, Store: st, LLM: llmClient, Bus: bus}
@@ -1005,7 +1008,17 @@ func (s *Server) createChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := s.Store.CreateChat(r.Context(), p.ID, uid)
+	keys := r.Header.Values("Idempotency-Key")
+	if len(keys) > 1 || (len(keys) == 1 && !chatCreationKeyPattern.MatchString(keys[0])) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid idempotency key"})
+		return
+	}
+	var id int64
+	if len(keys) == 1 {
+		id, err = s.Store.CreateChatWithKey(r.Context(), p.ID, uid, keys[0])
+	} else {
+		id, err = s.Store.CreateChat(r.Context(), p.ID, uid)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

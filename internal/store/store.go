@@ -710,6 +710,15 @@ func (s *Store) CreateChat(ctx context.Context, projectID, userID int64) (int64,
 	return id, err
 }
 
+func (s *Store) CreateChatWithKey(ctx context.Context, projectID, userID int64, key string) (int64, error) {
+	var id int64
+	query := `INSERT INTO agent_chats(project_id, user_id, creation_key) VALUES($1,$2,$3::uuid)
+		ON CONFLICT (project_id, user_id, creation_key) DO UPDATE SET creation_key=EXCLUDED.creation_key
+		RETURNING id`
+	err := s.db.QueryRow(ctx, query, projectID, userID, key).Scan(&id)
+	return id, err
+}
+
 func (s *Store) ChatByID(ctx context.Context, id int64) (*domain.Chat, error) {
 	var c domain.Chat
 	err := s.db.QueryRow(ctx, `SELECT id, project_id, user_id, title, created_at FROM agent_chats WHERE id=$1`, id).
