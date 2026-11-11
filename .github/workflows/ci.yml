@@ -70,6 +70,7 @@ jobs:
       - run: node ../scripts/test_title_save_ui.mjs
       - run: node ../scripts/test_task_creation_ui.mjs
       - run: node ../scripts/test_dependency_addition_ui.mjs
+      - run: node ../scripts/test_dependency_removal_refresh_ui.mjs
       - run: node ../scripts/test_description_draft_ui.mjs
       - run: node ../scripts/test_description_error_ui.mjs
       - run: node ../scripts/test_comment_submit_ui.mjs
