@@ -18,6 +18,7 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
 });
 
 let browser;
+let page;
 let releasePost = () => {};
 try {
   let ready = false;
@@ -33,7 +34,7 @@ try {
   }
   assert.ok(ready, "Vite did not start");
   browser = await playwright.chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
-  const page = await browser.newPage();
+  page = await browser.newPage();
   await page.addInitScript(() => {
     localStorage.setItem("akhflow.token", "account-a");
     localStorage.setItem("akhflow.project", "alpha");
@@ -183,6 +184,9 @@ try {
   console.log("PASS: chat drafts stay scoped and survive failed or late sends");
 } finally {
   releasePost();
+  if (page) {
+    await page.unrouteAll({ behavior: "wait" });
+  }
   if (browser) {
     await browser.close();
   }
