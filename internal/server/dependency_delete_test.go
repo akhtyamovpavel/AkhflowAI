@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -79,11 +80,21 @@ func TestDependencyDeleteProcesses(t *testing.T) {
 					Write([]byte) (int, error)
 					Close() error
 				}
-				out *bytes.Buffer
+				out         *bytes.Buffer
+				application string
+				done        <-chan error
 			}
 			start := func(action, api string) worker {
 				command := exec.Command(os.Args[0], "-test.run=^TestDependencyDeleteWorker$")
-				command.Env = append(os.Environ(), "DELETE_WORKER_DSN="+dsn, "DELETE_WORKER_ACTION="+action, "DELETE_WORKER_API="+api, fmt.Sprintf("DELETE_WORKER_OWNER=%d", owner), fmt.Sprintf("DELETE_WORKER_SOURCE=%d", source), fmt.Sprintf("DELETE_WORKER_TARGET=%d", target))
+				application := fmt.Sprintf("dependency-delete-%s-%d", action, target)
+				workerURL, err := url.Parse(dsn)
+				if err != nil {
+					t.Fatal(err)
+				}
+				query := workerURL.Query()
+				query.Set("application_name", application)
+				workerURL.RawQuery = query.Encode()
+				command.Env = append(os.Environ(), "DELETE_WORKER_DSN="+workerURL.String(), "DELETE_WORKER_ACTION="+action, "DELETE_WORKER_API="+api, fmt.Sprintf("DELETE_WORKER_OWNER=%d", owner), fmt.Sprintf("DELETE_WORKER_SOURCE=%d", source), fmt.Sprintf("DELETE_WORKER_TARGET=%d", target))
 				input, err := command.StdinPipe()
 				if err != nil {
 					t.Fatal(err)
@@ -94,7 +105,10 @@ func TestDependencyDeleteProcesses(t *testing.T) {
 				if err := command.Start(); err != nil {
 					t.Fatal(err)
 				}
-				return worker{command, input, out}
+				done := make(chan error, 1)
+				go func() { done <- command.Wait() }()
+				t.Cleanup(func() { _ = command.Process.Kill() })
+				return worker{command, input, out, application, done}
 			}
 			add, del := start("add", tc.addAPI), start("delete", tc.deleteAPI)
 			signal := func(w worker) {
@@ -112,7 +126,7 @@ func TestDependencyDeleteProcesses(t *testing.T) {
 			deadline := time.Now().Add(10 * time.Second)
 			for {
 				var waiting int
-				err := conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'`).Scan(&waiting)
+				err := conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND wait_event='advisory'`, first.application).Scan(&waiting)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -125,14 +139,45 @@ func TestDependencyDeleteProcesses(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 			signal(second)
-			time.Sleep(300 * time.Millisecond)
+			// Keep the first operation inside its trigger until the other process
+			// actually waits for a database lock or has completed. With the old
+			// implementation it can complete while the first is still paused.
+			deadline = time.Now().Add(10 * time.Second)
+			secondFinished := false
+			var secondErr error
+		waitSecond:
+			for {
+				select {
+				case secondErr = <-second.done:
+					secondFinished = true
+					break waitSecond
+				default:
+				}
+				var waiting int
+				if err := conn.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity waiting
+                    WHERE waiting.datname=current_database() AND waiting.application_name=$1 AND waiting.wait_event_type='Lock'
+                    AND EXISTS (SELECT 1 FROM pg_stat_activity blocker WHERE blocker.application_name=$2 AND blocker.pid=ANY(pg_blocking_pids(waiting.pid)))`, second.application, first.application).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting > 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("second worker did not wait or finish")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 			if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, tc.key); err != nil {
 				t.Fatal(err)
 			}
-			for _, w := range []worker{add, del} {
-				if err := w.cmd.Wait(); err != nil {
-					t.Fatalf("worker: %v: %s", err, w.out)
-				}
+			if err := <-first.done; err != nil {
+				t.Fatalf("first worker: %v: %s", err, first.out)
+			}
+			if !secondFinished {
+				secondErr = <-second.done
+			}
+			if secondErr != nil {
+				t.Fatalf("second worker: %v: %s", secondErr, second.out)
 			}
 			var wantAdd, wantDelete string
 			if tc.first == "delete" {
