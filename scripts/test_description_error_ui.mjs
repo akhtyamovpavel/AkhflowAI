@@ -23,6 +23,7 @@ let releaseSave;
 let saveStarted;
 let browser;
 let failTaskList = false;
+let descriptionWrites = 0;
 const pageErrors = [];
 
 try {
@@ -59,6 +60,9 @@ try {
       }
       data = [task, second];
     } else if (path === "/api/tasks/1" && request.method() === "PATCH") {
+      if (Object.hasOwn(request.postDataJSON(), "description")) {
+        descriptionWrites++;
+      }
       if (mode === "http-error") {
         await route.fulfill({ status: 500, json: { error: "failure" } });
         return;
@@ -139,17 +143,40 @@ try {
   await description.fill("Сохранено до ошибки обновления");
   mode = "refresh-error";
   await save.click();
-  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Обнови страницу.").waitFor();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
   assert.equal(task.description, "Сохранено до ошибки обновления");
   assert.equal(await description.inputValue(), "Сохранено до ошибки обновления");
   mode = "success";
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
   await description.fill("Список недоступен");
   failTaskList = true;
   await save.click();
-  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Обнови страницу.").waitFor();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
   assert.equal(task.description, "Список недоступен");
-  mode = "http-error";
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
+  await description.fill("Отправленная версия");
+  mode = "delayed";
+  const refreshStarted = new Promise((resolve) => { saveStarted = resolve; });
+  await save.click();
+  await refreshStarted;
+  await description.fill("Новый черновик описания");
   const title = page.getByRole("textbox", { name: "Заголовок задачи", exact: true });
+  await title.fill("Новый черновик заголовка");
+  mode = "refresh-error";
+  releaseSave();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
+  assert.equal(await description.inputValue(), "Новый черновик описания");
+  assert.equal(await title.inputValue(), "Новый черновик заголовка");
+  mode = "success";
+  const writesBeforeRefresh = descriptionWrites;
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
+  assert.equal(descriptionWrites, writesBeforeRefresh, "refresh resent the description");
+  assert.equal(await description.inputValue(), "Новый черновик описания");
+  assert.equal(await title.inputValue(), "Новый черновик заголовка");
+  mode = "http-error";
   await title.fill("Черновик заголовка");
   await description.fill("Несохранённый текст");
   await page.getByRole("alert").filter({ hasText: "Не удалось сохранить заголовок" }).waitFor();
