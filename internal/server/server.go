@@ -100,7 +100,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := s.Store.UserByEmail(r.Context(), req.Email)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		authServiceUnavailable(w)
 		return
 	}
 	if existing != nil {
@@ -109,12 +109,12 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.Store.CreateUser(r.Context(), req.Email, req.DisplayName, s.Auth.HashPassword(req.Password))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		authServiceUnavailable(w)
 		return
 	}
 	token, err := s.Auth.CreateToken(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication failed"})
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "user": map[string]any{"id": id, "email": req.Email, "display_name": req.DisplayName}})
@@ -131,7 +131,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := s.Store.PasswordHashByEmail(r.Context(), req.Email)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		authServiceUnavailable(w)
 		return
 	}
 	if hash == "" || !s.Auth.VerifyPassword(req.Password, hash) {
@@ -139,16 +139,24 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.Store.UserByEmail(r.Context(), req.Email)
-	if err != nil || u == nil {
+	if err != nil {
+		authServiceUnavailable(w)
+		return
+	}
+	if u == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "user lookup failed"})
 		return
 	}
 	token, err := s.Auth.CreateToken(u.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": u})
+}
+
+func authServiceUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication temporarily unavailable"})
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {

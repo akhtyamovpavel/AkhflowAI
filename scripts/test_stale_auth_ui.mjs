@@ -35,8 +35,16 @@ try {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const authorization = request.headers().authorization ?? "";
+    if (path === "/api/auth/register") {
+      await route.fulfill({ status: 503, json: { error: "authentication temporarily unavailable" } });
+      return;
+    }
     if (path === "/api/auth/login") {
       const email = request.postDataJSON().email;
+      if (email === "outage@example.invalid") {
+        await route.fulfill({ status: 503, json: { error: "authentication temporarily unavailable" } });
+        return;
+      }
       const account = email.split("@")[0];
       await route.fulfill({ json: { token: `fixture-${account}` } });
       return;
@@ -92,6 +100,17 @@ try {
     await target.getByRole("button", { name: "Войти", exact: true }).click();
   };
   await page.goto(url);
+  await login(page, "outage");
+  await page.getByText("Сервис временно недоступен. Попробуйте позже.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Нет аккаунта? Зарегистрироваться" }).click();
+  await page.getByPlaceholder("Имя").fill("New user");
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/auth/register")),
+    page.getByRole("button", { name: "Создать аккаунт" }).click(),
+  ]);
+  await page.getByText("Сервис временно недоступен. Попробуйте позже.", { exact: true }).waitFor();
+  assert.equal(await page.getByPlaceholder("Имя").inputValue(), "New user");
+  await page.getByRole("button", { name: "Есть аккаунт? Войти" }).click();
   await login(page, "account-a");
   await page.waitForFunction(() => window.pendingOld.length > 0);
   await page.getByRole("button", { name: "Выйти" }).click();
