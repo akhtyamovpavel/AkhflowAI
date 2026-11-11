@@ -10,6 +10,8 @@ import { reminderUserId } from "@/lib/deadlines";
 import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { AgentUsage } from "@/components/AgentUsage";
+import { AgentRuns } from "@/components/AgentRuns";
+import { isAgentRunList } from "@/lib/agentRuns";
 import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -216,12 +218,12 @@ function isToolCallList(value: unknown): value is NonNullable<ChatMessage["tool_
   });
 }
 
-function isCompletedAgentResponse(value: unknown): value is { reply: string; tool_calls: NonNullable<ChatMessage["tool_calls"]> | null; iterations: number } {
+function isAcceptedRun(value: unknown, chatId: number, key: string): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const result = value as Record<string, unknown>;
-  if ("error" in result || typeof result.reply !== "string" || !result.reply.trim() ||
-      !Number.isSafeInteger(result.iterations) || (result.iterations as number) < 1) return false;
-  return result.tool_calls === null || isToolCallList(result.tool_calls);
+  const run = value as Record<string, unknown>;
+  const statuses = ["queued", "running", "succeeded", "step_limit", "failed", "canceled", "interrupted"];
+  return Number.isSafeInteger(run.id) && (run.id as number) > 0 && run.chat_id === chatId &&
+    run.request_key === key && typeof run.status === "string" && statuses.includes(run.status);
 }
 
 function isChatHistory(value: unknown): value is ChatMessage[] {
@@ -1575,6 +1577,7 @@ function ProjectWorkspace({
   const [chatsLoading, setChatsLoading] = useState(false);
   const [chatsLoaded, setChatsLoaded] = useState(false);
   const [activeChat, setActiveChat] = useState<number | null>(null);
+  const [runRevision, setRunRevision] = useState(0);
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
   const [messageErrors, setMessageErrors] = useState<Record<number, boolean>>({});
   const [messageLoading, setMessageLoading] = useState<Record<number, boolean>>({});
@@ -2148,19 +2151,16 @@ function ProjectWorkspace({
     const controller = new AbortController();
     sendControllers.current.set(chatId, controller);
     try {
-      const data = await workspaceApi(`/api/chats/${chatId}/messages`, {
+      const data = await workspaceApi(`/api/chats/${chatId}/runs`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
         headers: { "Idempotency-Key": operation.id },
         signal: controller.signal,
-      }, token, 200);
-      if (!isCompletedAgentResponse(data)) throw new Error("invalid agent response");
+      }, token, 202);
+      if (!isAcceptedRun(data, chatId, operation.id)) throw new Error("invalid run");
       sendGuard.clear(operation.key, operation.id);
       if (!mounted.current || controller.signal.aborted || localStorage.getItem("akhflow.token") !== token) return;
-      setMessagesByChat((current) => ({
-        ...current,
-        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls ?? undefined }],
-      }));
+      setRunRevision((value) => value + 1);
       sent = true;
     } catch {
       // A failed response does not prove that the agent did not act.
@@ -2175,11 +2175,59 @@ function ProjectWorkspace({
     void loadChats();
   };
 
+  const retryUncertainMessage = async () => {
+    const pending = sendGuard.state?.pending;
+    const key = sendGuard.state?.storageKey;
+    if (!activeChat || !pending || pending.kind !== "run" || !key || !sendGuard.state?.checked) return;
+    const chatId = activeChat;
+    chatDrafts.update(chatId, { pending: true });
+    try {
+      const options = {
+        method: "POST",
+        body: JSON.stringify({ message: pending.text }),
+        headers: { "Idempotency-Key": pending.id },
+      };
+      const run = await workspaceApi(`/api/chats/${chatId}/runs`, options, token, 202);
+      if (!isAcceptedRun(run, chatId, pending.id)) {
+        throw new Error("invalid run");
+      }
+      sendGuard.clear(key, pending.id);
+      if (mounted.current && activeChatRef.current === chatId) {
+        setRunRevision((value) => value + 1);
+      }
+    } catch {
+      // The same key remains available for a deliberate retry.
+    } finally {
+      chatDrafts.update(chatId, { pending: false });
+    }
+  };
+
   const checkUncertainMessage = async () => {
     const pending = sendGuard.state?.pending;
-    if (!activeChat || !pending || chatDrafts.store.snapshot[activeChat]?.pending) return;
+    const key = sendGuard.state?.storageKey;
+    if (!activeChat || !pending || !key || chatDrafts.store.snapshot[activeChat]?.pending) return;
+    const chatId = activeChat;
     sendGuard.setChecked(pending.id, false);
-    if (await loadMessages(activeChat)) sendGuard.setChecked(pending.id, true);
+    try {
+      if (pending.kind === "legacy") {
+        if (await loadMessages(chatId)) sendGuard.setChecked(pending.id, true);
+        return;
+      }
+      const runs: unknown = await workspaceApi(`/api/chats/${chatId}/runs`, {}, token, 200);
+      if (!isAgentRunList(runs, chatId)) throw new Error("invalid runs");
+      const found = runs.some((run) => run.request_key === pending.id && run.message === pending.text && String(run.actor_id) === reminderUserId(token));
+      if (found) {
+        sendGuard.clear(key, pending.id);
+        if (mounted.current && activeChatRef.current === chatId) {
+          setRunRevision((value) => value + 1);
+          void loadMessages(chatId);
+        }
+        return;
+      }
+      if (await loadMessages(chatId)) sendGuard.setChecked(pending.id, true);
+    } catch {
+      // Keep the pending operation until it can be checked.
+    }
   };
 
   const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];
@@ -2556,6 +2604,7 @@ function ProjectWorkspace({
                     Попробуй: «Перемести задачу 3 в done», «Создай задачу Подготовить демо», «Что в backlog?»
                   </p>
                 )}
+                {activeChat && <AgentRuns chatId={activeChat} token={token} request={workspaceApi} refresh={loadMessages} revision={runRevision} />}
                 {messages.map((m) => (
                   <div key={m.id} className={`space-y-1 ${m.role === "user" ? "text-right" : ""}`}>
                     {m.role === "user" ? (
@@ -2569,7 +2618,7 @@ function ProjectWorkspace({
                     )}
                     {m.tool_calls?.map((tc, j) => (
                       <p key={j} className="break-all text-xs text-muted-foreground font-mono">
-                        {tc.tool}({typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args)}) → {briefToolResult(tc.result)}
+                        {tc.tool}: {briefToolResult(tc.result)}
                       </p>
                     ))}
                   </div>
@@ -2588,8 +2637,11 @@ function ProjectWorkspace({
                       <div role="alert" className="space-y-2 text-sm text-destructive">
                         <p>Результат отправки неизвестен. Агент мог выполнить действие или ещё выполнять его. Проверь историю перед продолжением.</p>
                         <p className="whitespace-pre-wrap">{sendGuard.state.pending.text}</p>
-                        <Button size="sm" variant="outline" disabled={messageLoading[activeChat]} onClick={() => void checkUncertainMessage()}>Проверить историю</Button>
-                        {sendGuard.state.checked && (
+                        <Button size="sm" variant="outline" disabled={messageLoading[activeChat]} onClick={() => void checkUncertainMessage()}>Проверить запуск</Button>
+                        {sendGuard.state.checked && sendGuard.state.pending.kind === "run" && (
+                          <Button size="sm" variant="outline" onClick={() => void retryUncertainMessage()}>Повторить проверенную отправку</Button>
+                        )}
+                        {sendGuard.state.checked && sendGuard.state.pending.kind === "legacy" && (
                           <Button size="sm" variant="outline" onClick={() => {
                             const pending = sendGuard.state?.pending;
                             const key = sendGuard.state?.storageKey;

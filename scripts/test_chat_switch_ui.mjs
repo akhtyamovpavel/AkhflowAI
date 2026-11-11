@@ -66,12 +66,14 @@ try {
       }
     } else if (path === "/api/chats/2/messages") {
       data = chatTwo;
-    } else if (path === "/api/chats/1/messages" && request.method() === "POST") {
+    } else if (path === "/api/chats/1/runs" && request.method() === "POST") {
       answerStarted();
       await answer;
       chatOne.push({ id: 12, role: "user", content: "Вопрос первому" });
       chatOne.push({ id: 13, role: "agent", content: "Ответ первому" });
-      data = { reply: "Ответ первому", tool_calls: null, iterations: 1 };
+      data = { id: 1, chat_id: 1, request_key: request.headers()["idempotency-key"], status: "queued" };
+      await route.fulfill({ status: 202, json: data });
+      return;
     }
     await route.fulfill({ status: 200, json: data });
   });

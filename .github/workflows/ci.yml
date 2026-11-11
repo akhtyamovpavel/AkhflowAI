@@ -69,6 +69,7 @@ jobs:
       - run: node ../scripts/test_projects_retry_ui.mjs
       - run: node ../scripts/test_chat_messages_retry_ui.mjs
       - run: node ../scripts/test_agent_message_uncertain_ui.mjs
+      - run: node ../scripts/test_agent_runs_ui.mjs
       - run: node ../scripts/test_chat_drafts_ui.mjs
       - run: node ../scripts/test_chats_retry_ui.mjs
       - run: node ../scripts/test_chat_creation_ui.mjs
