@@ -148,11 +148,18 @@ try {
   await save.click();
   await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Обнови страницу.").waitFor();
   assert.equal(task.description, "Список недоступен");
+  mode = "http-error";
+  const title = page.getByRole("textbox", { name: "Заголовок задачи", exact: true });
+  await title.fill("Черновик заголовка");
   await description.fill("Несохранённый текст");
+  await page.getByRole("alert").filter({ hasText: "Не удалось сохранить заголовок" }).waitFor();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "#2 Задача Б" }).click();
   await page.getByText("Задача #2", { exact: true }).waitFor();
   assert.equal(await description.inputValue(), "Другая");
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  await page.getByRole("button", { name: "Задача А", exact: true }).click();
+  assert.equal(await title.inputValue(), "Черновик заголовка", "description navigation lost title draft");
   assert.deepEqual(pageErrors, []);
   console.log("PASS: description errors preserve draft, retry succeeds and refresh failure is distinct");
 } finally {

@@ -453,6 +453,9 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
   );
 }
 
+const taskTitleDrafts = new Map<string, string>();
+const taskTitleWrites = new Map<string, Promise<unknown>>();
+
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
   project: string;
@@ -465,7 +468,17 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   onChanged: () => void | Promise<void>;
   request: ApiRequest;
 }) {
+  const token = localStorage.getItem("akhflow.token");
+  const draftKey = JSON.stringify([token, project, taskId]);
+  const initialTitle = taskTitleDrafts.get(draftKey) ?? "";
+  const initialTitleDirty = taskTitleDrafts.has(draftKey);
   const [task, setTask] = useState<Task | null>(null);
+  const [title, setTitle] = useState(initialTitle);
+  const [titleDirty, setTitleDirty] = useState(initialTitleDirty);
+  const [titleError, setTitleError] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  const titleDraft = useRef({ value: initialTitle, revision: 0, dirty: initialTitleDirty });
+  const titleSavePending = useRef(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [deps, setDeps] = useState<Task[]>([]);
   const [blocks, setBlocks] = useState<Task[]>([]);
@@ -479,13 +492,17 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
-  const token = localStorage.getItem("akhflow.token");
 
   const load = useCallback(async () => {
     if (!token) return;
+    const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
     const data = await request(`/api/tasks/${taskId}`, {}, token);
     setTask(data.task);
+    if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
+      titleDraft.current.value = data.task.title;
+      setTitle(data.task.title);
+    }
     setComments(data.comments ?? []);
     setDeps(data.dependencies ?? []);
     setBlocks(data.blocks ?? []);
@@ -509,6 +526,42 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
     await load();
     onChanged();
+  };
+
+  const saveTitle = async () => {
+    if (titleSavePending.current || !titleDraft.current.dirty) return;
+    const { value, revision } = titleDraft.current;
+    titleSavePending.current = true;
+    setSavingTitle(true);
+    setTitleError("");
+    const previousWrite = taskTitleWrites.get(draftKey) ?? Promise.resolve();
+    const write = previousWrite.catch(() => {}).then(() => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ title: value }) }, token));
+    taskTitleWrites.set(draftKey, write);
+    try {
+      await write;
+      if (taskTitleDrafts.get(draftKey) === value) {
+        taskTitleDrafts.delete(draftKey);
+      }
+      if (titleDraft.current.revision === revision) {
+        titleDraft.current.dirty = false;
+        setTitleDirty(false);
+      }
+      titleDraft.current.revision++;
+      try {
+        await load();
+        await onChanged();
+      } catch {
+        setTitleError("Не удалось обновить карточку после сохранения заголовка. Введённый текст остался в поле.");
+      }
+    } catch {
+      setTitleError("Не удалось сохранить заголовок. Введённый текст остался в поле. Попробуй ещё раз.");
+    } finally {
+      if (taskTitleWrites.get(draftKey) === write) {
+        taskTitleWrites.delete(draftKey);
+      }
+      titleSavePending.current = false;
+      setSavingTitle(false);
+    }
   };
 
   const saveDescription = async () => {
@@ -542,6 +595,10 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const closeDetail = () => {
+    if (titleDraft.current.dirty || titleSavePending.current) {
+      setTitleError("Дождись сохранения заголовка или повтори попытку, прежде чем закрыть карточку.");
+      return;
+    }
     if (canLeave()) onClose();
   };
 
@@ -638,12 +695,39 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             Обсудить в Telegram
           </Button>
           <Input
-            value={task.title}
-            onChange={(e) => setTask({ ...task, title: e.target.value })}
-            onBlur={() => patch({ title: task.title })}
+            aria-label="Заголовок задачи"
+            aria-invalid={!!titleError && titleDirty}
+            value={title}
+            onChange={(e) => {
+              const value = e.target.value;
+              taskTitleDrafts.set(draftKey, value);
+              titleDraft.current = { value, revision: titleDraft.current.revision + 1, dirty: true };
+              setTitle(value);
+              setTitleDirty(true);
+              setTitleError("");
+            }}
+            onBlur={() => void saveTitle()}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             className="text-base font-medium"
           />
+          {savingTitle && <p role="status" className="text-sm text-muted-foreground">Сохраняем заголовок...</p>}
+          {titleError && <p role="alert" className="text-sm text-destructive">{titleError}</p>}
+          {titleDirty && !savingTitle && (
+            <Button size="sm" variant="outline" onClick={() => void saveTitle()}>
+              {titleError ? "Повторить сохранение" : "Сохранить заголовок"}
+            </Button>
+          )}
+          {titleDirty && !savingTitle && (
+            <Button size="sm" variant="ghost" onPointerDown={(event) => event.preventDefault()} onClick={() => {
+              taskTitleDrafts.delete(draftKey);
+              titleDraft.current = { value: task.title, revision: titleDraft.current.revision + 1, dirty: false };
+              setTitle(task.title);
+              setTitleDirty(false);
+              setTitleError("");
+            }}>
+              Отменить изменение заголовка
+            </Button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-muted-foreground">Статус
               <select
