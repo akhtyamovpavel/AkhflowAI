@@ -19,6 +19,7 @@ import { AssigneeSuggestion } from "@/components/AssigneeSuggestion";
 import { readSharedTask, telegramShareURL } from "@/lib/taskShare";
 import type { SharedTask } from "@/lib/taskShare";
 import { subscribeProjectEvents } from "@/lib/projectEvents";
+import { useAgentMessageGuard } from "@/lib/agentMessageGuard";
 import { KanbanSquare, ListTodo, MessageSquare, Plus, Send, Layers, Link2, X, ChartNoAxesCombined } from "lucide-react";
 
 type Task = {
@@ -1515,9 +1516,16 @@ function ProjectWorkspace({
   const pendingChats = useRef(new Set<number>());
   const messageRequests = useRef(new Map<number, number>());
   const messageControllers = useRef(new Map<number, AbortController>());
+  const sendControllers = useRef(new Map<number, AbortController>());
   const activeChatRef = useRef(activeChat);
   activeChatRef.current = activeChat;
   const [input, setInput] = useState("");
+  const sendGuard = useAgentMessageGuard(token, project, activeChat);
+  useEffect(() => {
+    return () => {
+      sendControllers.current.forEach((controller) => controller.abort());
+    };
+  }, []);
   const creation = useTaskCreationDraft(token, project);
   const chatCreation = useChatCreationDraft(token, project);
   useEffect(() => {
@@ -1657,7 +1665,7 @@ function ProjectWorkspace({
   const loadMessages = useCallback(
     async (chatId: number) => {
       if (!mounted.current || pendingChats.current.has(chatId)) {
-        return;
+        return false;
       }
       const request = (messageRequests.current.get(chatId) ?? 0) + 1;
       messageRequests.current.set(chatId, request);
@@ -1670,12 +1678,14 @@ function ProjectWorkspace({
       try {
         const path = `/api/chats/${chatId}/messages`;
         const data: ChatMessage[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
-        if (!isCurrent()) return;
+        if (!isCurrent()) return false;
         setMessagesByChat((current) => ({ ...current, [chatId]: data }));
         setMessageErrors((current) => ({ ...current, [chatId]: false }));
+        return true;
       } catch {
-        if (!isCurrent()) return;
+        if (!isCurrent()) return false;
         setMessageErrors((current) => ({ ...current, [chatId]: true }));
+        return false;
       } finally {
         if (isCurrent()) {
           setMessageLoading((current) => ({ ...current, [chatId]: false }));
@@ -2036,10 +2046,16 @@ function ProjectWorkspace({
 
   const askAgent = async () => {
     if (!input.trim() || !activeChat || pendingChats.current.has(activeChat) || !messagesByChat[activeChat]) return;
+    if (!sendGuard.state?.ready || sendGuard.state.pending || sendGuard.state.storageError) return;
     const chatId = activeChat;
     const text = input.trim();
-    setInput("");
     pendingChats.current.add(chatId);
+    const operation = sendGuard.remember(text);
+    if (!operation) {
+      pendingChats.current.delete(chatId);
+      return;
+    }
+    setInput("");
     setBusyChats((current) => new Set(current).add(chatId));
     messageControllers.current.get(chatId)?.abort();
     messageRequests.current.set(chatId, (messageRequests.current.get(chatId) ?? 0) + 1);
@@ -2050,33 +2066,45 @@ function ProjectWorkspace({
       [chatId]: [...(current[chatId] ?? []), { id: tempId, role: "user", content: text }],
     }));
     let sent = false;
+    const controller = new AbortController();
+    sendControllers.current.set(chatId, controller);
     try {
       const data = await workspaceApi(`/api/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ message: text }),
+        signal: controller.signal,
       }, token);
+      sendGuard.clear(operation.key, operation.id);
+      if (!mounted.current || controller.signal.aborted || localStorage.getItem("akhflow.token") !== token) return;
       setMessagesByChat((current) => ({
         ...current,
         [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls }],
       }));
       sent = true;
-    } catch (e: any) {
-      setMessagesByChat((current) => ({
-        ...current,
-        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: `Ошибка: ${e.message}` }],
-      }));
+    } catch {
+      // A failed response does not prove that the agent did not act.
+    } finally {
+      if (sendControllers.current.get(chatId) === controller) sendControllers.current.delete(chatId);
+      pendingChats.current.delete(chatId);
+      if (mounted.current) {
+        setBusyChats((current) => {
+          const next = new Set(current);
+          next.delete(chatId);
+          return next;
+        });
+      }
     }
-    pendingChats.current.delete(chatId);
-    setBusyChats((current) => {
-      const next = new Set(current);
-      next.delete(chatId);
-      return next;
-    });
     if (sent && mounted.current && activeChatRef.current === chatId) {
       void loadMessages(chatId);
     }
-    loadTasks();
-    loadChats();
+    void loadTasks().catch(() => {});
+    void loadChats();
+  };
+
+  const checkUncertainMessage = async () => {
+    const pending = sendGuard.state?.pending;
+    if (!activeChat || !pending || busyChats.has(activeChat)) return;
+    if (await loadMessages(activeChat)) sendGuard.markChecked(pending.id);
   };
 
   const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];
@@ -2473,14 +2501,36 @@ function ProjectWorkspace({
               </CardContent>
               <CardContent className="pt-0">
                 {activeChat && (
-                  <div className="flex gap-2">
+                  <div className="space-y-2">
+                    {sendGuard.state?.storageError && (
+                      <p role="alert" className="text-sm text-destructive">Не удалось сохранить состояние отправки. Проверь доступ к хранилищу браузера и обнови страницу.</p>
+                    )}
+                    {sendGuard.state?.acknowledged && (
+                      <p className="text-sm text-destructive">Предыдущее действие с неизвестным результатом всё ещё может выполняться. Учитывай это перед новой отправкой.</p>
+                    )}
+                    {sendGuard.state?.pending && !sendGuard.state.storageError && !busy && (
+                      <div role="alert" className="space-y-2 text-sm text-destructive">
+                        <p>Результат отправки неизвестен. Агент мог выполнить действие или ещё выполнять его. Проверь историю перед продолжением.</p>
+                        <p className="whitespace-pre-wrap">{sendGuard.state.pending.text}</p>
+                        <Button size="sm" variant="outline" disabled={messageLoading[activeChat]} onClick={() => void checkUncertainMessage()}>Проверить историю</Button>
+                        {sendGuard.state.checked && (
+                          <Button size="sm" variant="outline" onClick={() => {
+                            const pending = sendGuard.state?.pending;
+                            const key = sendGuard.state?.storageKey;
+                            if (pending && key) sendGuard.acknowledge(key, pending.id);
+                          }}>Я проверил историю и понимаю, что действие может продолжаться</Button>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
                     <Input
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && askAgent()}
                       placeholder="Скажи агенту, что сделать..."
                     />
-                    <Button onClick={askAgent} disabled={busy || !messagesByChat[activeChat]}><Send /></Button>
+                    <Button onClick={askAgent} disabled={busy || !messagesByChat[activeChat] || !sendGuard.state?.ready || !!sendGuard.state.pending || sendGuard.state.storageError}><Send /></Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
