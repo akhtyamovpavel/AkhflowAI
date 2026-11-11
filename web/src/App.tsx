@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -974,6 +974,42 @@ function AccountWorkspace({ token, saveToken }: {
   );
 }
 
+type TaskCreationDraft = {
+  title: string;
+  revision: number;
+  pending: boolean;
+  error: string;
+  created: number;
+};
+
+type TaskCreationStore = {
+  snapshot: TaskCreationDraft;
+  listeners: Set<() => void>;
+};
+
+const taskCreationDrafts = new Map<string, TaskCreationStore>();
+
+function useTaskCreationDraft(token: string, project: string) {
+  const key = JSON.stringify([token, project]);
+  let store = taskCreationDrafts.get(key);
+  if (!store) {
+    store = { snapshot: { title: "", revision: 0, pending: false, error: "", created: 0 }, listeners: new Set() };
+    taskCreationDrafts.set(key, store);
+  }
+  const draftStore = store;
+  const subscribe = useCallback((listener: () => void) => {
+    draftStore.listeners.add(listener);
+    return () => { draftStore.listeners.delete(listener); };
+  }, [draftStore]);
+  const getSnapshot = useCallback(() => draftStore.snapshot, [draftStore]);
+  const draft = useSyncExternalStore(subscribe, getSnapshot);
+  const update = (patch: Partial<TaskCreationDraft>) => {
+    draftStore.snapshot = { ...draftStore.snapshot, ...patch };
+    draftStore.listeners.forEach((listener) => listener());
+  };
+  return { draft, store: draftStore, update };
+}
+
 type WorkspaceView = "kanban" | "list" | "dashboard" | "agent";
 
 function ProjectWorkspace({
@@ -1013,7 +1049,8 @@ function ProjectWorkspace({
   const pendingChats = useRef(new Set<number>());
   const messageRequests = useRef(new Map<number, number>());
   const [input, setInput] = useState("");
-  const [newTitle, setNewTitle] = useState("");
+  const creation = useTaskCreationDraft(token, project);
+  const [createRefreshError, setCreateRefreshError] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [epics, setEpics] = useState<Epic[]>([]);
@@ -1142,8 +1179,14 @@ function ProjectWorkspace({
   const selectedVisibleTasks = visibleTasks.filter((task) => selectedTasks.has(task.id));
 
   useEffect(() => {
-    loadTasks();
-  }, [loadTasks, project]);
+    let active = true;
+    void loadTasks().catch(() => {
+      if (active && creation.draft.created > 0) {
+        setCreateRefreshError("Задача создана, но список не обновился. Обнови список ещё раз.");
+      }
+    });
+    return () => { active = false; };
+  }, [loadTasks, project, creation.draft.created]);
 
   useEffect(() => {
     if (!project || !projectId) return;
@@ -1359,13 +1402,23 @@ function ProjectWorkspace({
   };
 
   const createTask = async () => {
-    if (!newTitle.trim()) return;
-    await workspaceApi(`/api/projects/${project}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ title: newTitle, status: "backlog" }),
-    }, token);
-    setNewTitle("");
-    loadTasks();
+    const submitted = creation.store.snapshot;
+    if (!project || submitted.pending || !submitted.title.trim()) return;
+    creation.update({ pending: true, error: "" });
+    setCreateRefreshError("");
+    try {
+      await workspaceApi(`/api/projects/${project}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({ title: submitted.title, status: "backlog" }),
+      }, token);
+      const current = creation.store.snapshot;
+      const title = current.revision === submitted.revision ? "" : current.title;
+      creation.update({ title, created: current.created + 1 });
+    } catch {
+      creation.update({ error: `Не удалось создать задачу «${submitted.title}». Введённый текст сохранён. Попробуй ещё раз.` });
+    } finally {
+      creation.update({ pending: false });
+    }
   };
 
   const importBitrixTasks = async () => {
@@ -1596,12 +1649,27 @@ function ProjectWorkspace({
             aria-keyshortcuts="Alt+N"
             className="max-w-sm"
             placeholder="Новая задача..."
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createTask()}
+            value={creation.draft.title}
+            onChange={(e) => creation.update({ title: e.target.value, revision: creation.store.snapshot.revision + 1 })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void createTask();
+              }
+            }}
           />
-          <Button size="sm" onClick={createTask}><Plus /> Добавить</Button>
+          <Button size="sm" disabled={creation.draft.pending || !project || !creation.draft.title.trim()} onClick={() => void createTask()}><Plus /> Добавить</Button>
         </div>
+        {creation.draft.pending && <p role="status" className="text-sm text-muted-foreground">Создаём задачу...</p>}
+        {creation.draft.error && <p role="alert" className="text-sm text-destructive">{creation.draft.error}</p>}
+        {createRefreshError && (
+          <div role="alert" className="text-sm text-destructive">
+            {createRefreshError}
+            <Button size="sm" variant="ghost" onClick={() => {
+              void loadTasks().then(() => setCreateRefreshError("")).catch(() => {});
+            }}>Обновить список</Button>
+          </div>
+        )}
         <p className="text-sm text-muted-foreground">Alt+N: перейти к созданию задачи.</p>
 
         {(view === "kanban" || view === "list") && (
