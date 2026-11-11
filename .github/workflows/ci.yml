@@ -67,6 +67,7 @@ jobs:
       - run: node ../scripts/test_epics_sse_order_ui.mjs
       - run: node ../scripts/test_stale_auth_ui.mjs
       - run: node ../scripts/test_projects_retry_ui.mjs
+      - run: node ../scripts/test_chats_retry_ui.mjs
       - run: node ../scripts/test_epics_retry_ui.mjs
       - run: node ../scripts/test_tasks_retry_ui.mjs
       - run: node ../scripts/test_stale_forbidden_ui.mjs
