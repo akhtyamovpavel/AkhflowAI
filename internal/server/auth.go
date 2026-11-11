@@ -12,14 +12,17 @@ import (
 	"time"
 
 	"akhflow.ai/akhflow/internal/domain"
-	"akhflow.ai/akhflow/internal/store"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/argon2"
 )
 
+type userLookup interface {
+	UserByID(ctx context.Context, id int64) (*domain.User, error)
+}
+
 type Auth struct {
-	Store    *store.Store
+	Store    userLookup
 	Secret   []byte
 	TokenTTL time.Duration
 }
@@ -112,7 +115,11 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		u, err := a.Store.UserByID(r.Context(), id)
-		if err != nil || u == nil {
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication temporarily unavailable"})
+			return
+		}
+		if u == nil {
 			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
 		}
