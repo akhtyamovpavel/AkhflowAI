@@ -38,8 +38,8 @@ func (s *Store) CreateScheduledOccurrence(ctx context.Context, masterID int64, n
 	}
 	var id int64
 	err = tx.QueryRow(ctx, `INSERT INTO tasks
-		(project_id, parent_id, title, description, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
-		SELECT project_id, parent_id, title, description, $2, priority, estimate_min, $3::date, author_id, assignee_id, '', epic_id
+		(project_id, parent_id, title, description, acceptance_criteria, status, priority, estimate_min, due_date, author_id, assignee_id, recurring, epic_id)
+		SELECT project_id, parent_id, title, description, acceptance_criteria, $2, priority, estimate_min, $3::date, author_id, assignee_id, '', epic_id
 		FROM tasks WHERE id=$1 RETURNING id`, masterID, domain.StatusTodo, today.Format(time.DateOnly)).Scan(&id)
 	if err != nil {
 		return nil, err

@@ -281,15 +281,16 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title       string     `json:"title"`
-		Description string     `json:"description"`
-		Status      string     `json:"status"`
-		Priority    string     `json:"priority"`
-		EstimateMin *int       `json:"estimate_min"`
-		DueDate     *time.Time `json:"due_date"`
-		AssigneeID  *int64     `json:"assignee_id"`
-		Labels      []string   `json:"labels"`
-		Recurring   string     `json:"recurring"`
+		Title              string          `json:"title"`
+		Description        string          `json:"description"`
+		AcceptanceCriteria json.RawMessage `json:"acceptance_criteria"`
+		Status             string          `json:"status"`
+		Priority           string          `json:"priority"`
+		EstimateMin        *int            `json:"estimate_min"`
+		DueDate            *time.Time      `json:"due_date"`
+		AssigneeID         *int64          `json:"assignee_id"`
+		Labels             []string        `json:"labels"`
+		Recurring          string          `json:"recurring"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -298,6 +299,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if req.Title == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title required"})
 		return
+	}
+	criteria := ""
+	if req.AcceptanceCriteria != nil {
+		if string(req.AcceptanceCriteria) == "null" || json.Unmarshal(req.AcceptanceCriteria, &criteria) != nil || !domain.ValidAcceptanceCriteria(criteria) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad acceptance criteria"})
+			return
+		}
 	}
 	if req.AssigneeID != nil {
 		if !s.validateAssignee(w, r, p.ID, *req.AssigneeID) {
@@ -313,16 +321,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		priority = domain.PriorityMedium
 	}
 	t := domain.Task{
-		ProjectID:   p.ID,
-		Title:       req.Title,
-		Description: req.Description,
-		Status:      status,
-		Priority:    priority,
-		EstimateMin: req.EstimateMin,
-		DueDate:     req.DueDate,
-		AuthorID:    id,
-		AssigneeID:  req.AssigneeID,
-		Labels:      req.Labels,
+		ProjectID:          p.ID,
+		Title:              req.Title,
+		Description:        req.Description,
+		AcceptanceCriteria: criteria,
+		Status:             status,
+		Priority:           priority,
+		EstimateMin:        req.EstimateMin,
+		DueDate:            req.DueDate,
+		AuthorID:           id,
+		AssigneeID:         req.AssigneeID,
+		Labels:             req.Labels,
 	}
 	if req.Recurring != "" {
 		if !domain.ValidRecurring(req.Recurring) {
@@ -436,6 +445,15 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		s, _ := v.(string)
 		sets = append(sets, "description")
 		args = append(args, s)
+	}
+	if v, ok := body["acceptance_criteria"]; ok {
+		criteria, valid := v.(string)
+		if !valid || !domain.ValidAcceptanceCriteria(criteria) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad acceptance criteria"})
+			return
+		}
+		sets = append(sets, "acceptance_criteria")
+		args = append(args, criteria)
 	}
 	if v, ok := body["status"]; ok {
 		st, _ := v.(string)
