@@ -84,6 +84,10 @@ try {
     }
     let data = [];
     if (path === "/api/projects") {
+      if (account === "Bearer other-fixture-token") {
+        const projectDelay = Number(process.env.TEST_PROJECT_DELAY_MS ?? 200);
+        await delay(projectDelay);
+      }
       data = [{ id: 1, slug: "alpha", name: "Alpha" }, { id: 2, slug: "beta", name: "Beta" }];
     }
     if (path.endsWith("/tasks")) {
@@ -94,7 +98,7 @@ try {
     }
     await route.fulfill({ json: data });
   });
-  await page.goto(url);
+  await page.goto(url, { timeout: 15000 });
   const input = page.getByPlaceholder("Новая задача...");
   const add = page.getByRole("button", { name: "Добавить", exact: true });
   const pending = page.getByRole("status").filter({ hasText: "Создаём задачу" });
@@ -104,10 +108,20 @@ try {
     await input.waitFor();
   };
   const switchAccount = async (token) => {
+    const projectsLoaded = page.waitForResponse((response) => {
+      const request = response.request();
+      return new URL(response.url()).pathname === "/api/projects" &&
+        request.headers().authorization === `Bearer ${token}` && response.status() === 200;
+    });
     await page.evaluate((value) => {
       localStorage.setItem("akhflow.token", value);
       window.dispatchEvent(new StorageEvent("storage", { key: "akhflow.token", storageArea: localStorage }));
     }, token);
+    await projectsLoaded;
+    await page.waitForFunction(() => {
+      const select = document.querySelector("header select");
+      return select?.value === "alpha" && Array.from(select.options).some((option) => option.value === "alpha");
+    });
     await page.waitForFunction(() => document.querySelector('input[placeholder="Новая задача..."]'));
     await page.locator("header select").first().selectOption("alpha");
   };
