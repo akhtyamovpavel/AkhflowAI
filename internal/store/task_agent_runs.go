@@ -71,9 +71,9 @@ func (s *Store) EnqueueTaskRun(ctx context.Context, taskID, actorID int64, key, 
 	if err != nil {
 		return nil, err
 	}
-	// Project instruction snapshots are captured in this insert when configured.
-	query := `INSERT INTO agent_runs(chat_id,actor_id,request_key,message,history,status,task_id,task_snapshot) VALUES($1,$2,$3::uuid,$4,'[]'::jsonb,'queued',$5,$6::jsonb) RETURNING ` + runColumns
-	run, err := scanRun(tx.QueryRow(ctx, query, chatID, actorID, key, message, taskID, encoded))
+	query := `INSERT INTO agent_runs(chat_id,actor_id,request_key,message,history,status,task_id,task_snapshot,instructions_snapshot,instructions_version)
+		SELECT $1,$2,$3::uuid,$4,'[]'::jsonb,'queued',$5,$6::jsonb,agent_instructions,agent_instructions_version FROM projects WHERE id=$7 RETURNING ` + runColumns
+	run, err := scanRun(tx.QueryRow(ctx, query, chatID, actorID, key, message, taskID, encoded, projectID))
 	if err != nil {
 		return nil, err
 	}
