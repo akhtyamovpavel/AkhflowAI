@@ -465,7 +465,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   recommendationReady: boolean;
   onOpen: (id: number) => void;
   onClose: () => void;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   request: ApiRequest;
 }) {
   const token = localStorage.getItem("akhflow.token");
@@ -486,6 +486,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [desc, setDesc] = useState("");
   const description = useRef({ value: "", saved: "", version: 0 });
   const [savingDescription, setSavingDescription] = useState(false);
+  const descriptionSaving = useRef(false);
+  const [descriptionError, setDescriptionError] = useState("");
+  const [descriptionRefreshFailed, setDescriptionRefreshFailed] = useState(false);
   const [comment, setComment] = useState("");
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
@@ -562,18 +565,55 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   };
 
-  const saveDescription = async () => {
-    const value = description.current.value;
+  const refreshDescriptionData = async () => {
+    const updates = await Promise.allSettled([load(), Promise.resolve().then(onChanged)]);
+    const failed = updates.some((result) => result.status === "rejected");
+    setDescriptionRefreshFailed(failed);
+    if (failed) {
+      setDescriptionError("Описание сохранено, но обновить данные не удалось. Повтори обновление.");
+    } else {
+      setDescriptionError("");
+    }
+  };
+
+  const retryDescriptionRefresh = async () => {
+    if (descriptionSaving.current) return;
+    descriptionSaving.current = true;
     setSavingDescription(true);
+    try {
+      await refreshDescriptionData();
+    } finally {
+      descriptionSaving.current = false;
+      setSavingDescription(false);
+    }
+  };
+
+  const saveDescription = async () => {
+    if (descriptionSaving.current) return;
+    const value = description.current.value;
+    descriptionSaving.current = true;
+    setSavingDescription(true);
+    setDescriptionError("");
+    setDescriptionRefreshFailed(false);
     try {
       await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ description: value }) }, token);
       description.current.saved = value;
       description.current.version += 1;
-      await load();
-      onChanged();
+      await refreshDescriptionData();
+    } catch {
+      setDescriptionError("Не удалось сохранить описание. Попробуй ещё раз.");
     } finally {
+      descriptionSaving.current = false;
       setSavingDescription(false);
     }
+  };
+
+  const canLeave = () => {
+    if (descriptionSaving.current) return false;
+    if (description.current.value !== description.current.saved) {
+      return window.confirm("Описание не сохранено. Закрыть карточку и потерять изменения?");
+    }
+    return true;
   };
 
   const closeDetail = () => {
@@ -581,7 +621,11 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       setTitleError("Дождись сохранения заголовка или повтори попытку, прежде чем закрыть карточку.");
       return;
     }
-    onClose();
+    if (canLeave()) onClose();
+  };
+
+  const openDetail = (id: number) => {
+    if (canLeave()) onOpen(id);
   };
 
   const addComment = async () => {
@@ -621,7 +665,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const depRow = (d: Task, direction: "depends" | "blocks") => (
     <div key={d.id} className="flex items-center justify-between gap-2 rounded-md border p-2">
-      <button className="text-left text-sm hover:underline" onClick={() => onOpen(d.id)}>
+      <button className="text-left text-sm hover:underline" onClick={() => openDetail(d.id)}>
         #{d.id} {d.title}
       </button>
       <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded ${d.status === "done" ? "bg-secondary text-secondary-foreground" : "bg-amber-500/10 text-amber-600"}`}>
@@ -776,6 +820,12 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
               }}
               placeholder="Описание задачи..."
             />
+            {descriptionError && <p role="alert" className="text-sm text-destructive">{descriptionError}</p>}
+            {descriptionRefreshFailed && (
+              <Button size="sm" variant="outline" disabled={savingDescription} onPointerDown={(event) => event.preventDefault()} onClick={retryDescriptionRefresh}>
+                Повторить обновление
+              </Button>
+            )}
             <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription}>Сохранить</Button>
           </div>
           <div>

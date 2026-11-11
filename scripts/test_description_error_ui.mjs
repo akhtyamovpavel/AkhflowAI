@@ -1,0 +1,200 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
+
+const moduleName = process.env.PLAYWRIGHT_MODULE;
+const defaultModule = new URL("../web/node_modules/playwright-core/index.mjs", import.meta.url).href;
+const playwright = await import(moduleName ? pathToFileURL(moduleName).href : defaultModule);
+const probe = createServer();
+await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+const port = probe.address().port;
+await new Promise((resolve) => probe.close(resolve));
+const url = `http://127.0.0.1:${port}`;
+const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+  cwd: new URL("../web", import.meta.url),
+  stdio: "ignore",
+});
+const task = { id: 1, title: "Задача А", description: "Исходное", status: "backlog", priority: "medium" };
+const second = { id: 2, title: "Задача Б", description: "Другая", status: "todo", priority: "medium" };
+let mode = "http-error";
+let releaseSave;
+let saveStarted;
+let browser;
+let failTaskList = false;
+let descriptionWrites = 0;
+const pageErrors = [];
+
+try {
+  let ready = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      ready = (await fetch(url)).ok;
+    } catch {
+      await delay(100);
+    }
+    if (ready) {
+      break;
+    }
+  }
+  assert.ok(ready, "Vite did not start");
+  browser = await playwright.chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
+  const page = await browser.newPage();
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    localStorage.setItem("akhflow.token", "fixture-token");
+    localStorage.setItem("akhflow.project", "alpha");
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    let data = [];
+    if (path === "/api/projects") {
+      data = [{ id: 1, slug: "alpha", name: "Альфа" }];
+    } else if (path === "/api/projects/alpha/tasks") {
+      if (failTaskList) {
+        failTaskList = false;
+        await route.fulfill({ status: 500, json: { error: "failure" } });
+        return;
+      }
+      data = [task, second];
+    } else if (path === "/api/tasks/1" && request.method() === "PATCH") {
+      if (Object.hasOwn(request.postDataJSON(), "description")) {
+        descriptionWrites++;
+      }
+      if (mode === "http-error") {
+        await route.fulfill({ status: 500, json: { error: "failure" } });
+        return;
+      }
+      if (mode === "network-error") {
+        await route.abort();
+        return;
+      }
+      if (mode === "delayed" || mode === "delayed-fail") {
+        const failing = mode === "delayed-fail";
+        saveStarted();
+        await new Promise((resolve) => { releaseSave = resolve; });
+        if (failing) {
+          await route.fulfill({ status: 500, json: { error: "failure" } });
+          return;
+        }
+      }
+      Object.assign(task, request.postDataJSON());
+    } else if (path === "/api/tasks/1") {
+      if (mode === "refresh-error") {
+        await route.fulfill({ status: 500, json: { error: "failure" } });
+        return;
+      }
+      data = { task, dependencies: [second], comments: [], blocks: [], history: [] };
+    } else if (path === "/api/tasks/2") {
+      data = { task: second, dependencies: [], comments: [], blocks: [], history: [] };
+    }
+    await route.fulfill({ status: 200, json: data }).catch(() => {});
+  });
+  await page.goto(url);
+  await page.getByRole("button", { name: "Задача А", exact: true }).click();
+  const description = page.getByPlaceholder("Описание задачи...");
+  const save = page.getByRole("button", { name: "Сохранить", exact: true });
+  await description.fill("Черновик");
+  await save.click();
+  await page.getByRole("alert").getByText("Не удалось сохранить описание. Попробуй ещё раз.").waitFor();
+  assert.equal(await description.inputValue(), "Черновик");
+  assert.equal(task.description, "Исходное");
+  mode = "network-error";
+  await save.click();
+  await page.getByRole("alert").getByText("Не удалось сохранить описание. Попробуй ещё раз.").waitFor();
+  assert.equal(await description.inputValue(), "Черновик");
+  mode = "delayed-fail";
+  const failureStarted = new Promise((resolve) => { saveStarted = resolve; });
+  await save.click();
+  await failureStarted;
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "pending save allowed closing");
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "pending save allowed navigation");
+  releaseSave();
+  await page.getByRole("alert").getByText("Не удалось сохранить описание. Попробуй ещё раз.").waitFor();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "cancelled close lost draft");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  assert.equal(await description.inputValue(), "Черновик", "cancelled navigation lost draft");
+  mode = "delayed";
+  const started = new Promise((resolve) => { saveStarted = resolve; });
+  await save.click();
+  await started;
+  await description.fill("Новый текст");
+  releaseSave();
+  await save.waitFor({ state: "visible" });
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => {
+    return button.textContent === "Сохранить" && !button.disabled;
+  }));
+  assert.equal(task.description, "Черновик");
+  assert.equal(await description.inputValue(), "Новый текст");
+  assert.equal(await page.getByRole("alert").count(), 0);
+  mode = "success";
+  await save.click();
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => {
+    return button.textContent === "Сохранить" && !button.disabled;
+  }));
+  assert.equal(task.description, "Новый текст");
+  await description.fill("Сохранено до ошибки обновления");
+  mode = "refresh-error";
+  await save.click();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
+  assert.equal(task.description, "Сохранено до ошибки обновления");
+  assert.equal(await description.inputValue(), "Сохранено до ошибки обновления");
+  mode = "success";
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
+  await description.fill("Список недоступен");
+  failTaskList = true;
+  await save.click();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
+  assert.equal(task.description, "Список недоступен");
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
+  await description.fill("Отправленная версия");
+  mode = "delayed";
+  const refreshStarted = new Promise((resolve) => { saveStarted = resolve; });
+  await save.click();
+  await refreshStarted;
+  await description.fill("Новый черновик описания");
+  const title = page.getByRole("textbox", { name: "Заголовок задачи", exact: true });
+  await title.fill("Новый черновик заголовка");
+  mode = "refresh-error";
+  releaseSave();
+  await page.getByRole("alert").getByText("Описание сохранено, но обновить данные не удалось. Повтори обновление.").waitFor();
+  assert.equal(await description.inputValue(), "Новый черновик описания");
+  assert.equal(await title.inputValue(), "Новый черновик заголовка");
+  mode = "success";
+  const writesBeforeRefresh = descriptionWrites;
+  await page.getByRole("button", { name: "Повторить обновление" }).click();
+  await page.getByRole("button", { name: "Повторить обновление" }).waitFor({ state: "hidden" });
+  assert.equal(descriptionWrites, writesBeforeRefresh, "refresh resent the description");
+  assert.equal(await description.inputValue(), "Новый черновик описания");
+  assert.equal(await title.inputValue(), "Новый черновик заголовка");
+  mode = "http-error";
+  await title.fill("Черновик заголовка");
+  await description.fill("Несохранённый текст");
+  await page.getByRole("alert").filter({ hasText: "Не удалось сохранить заголовок" }).waitFor();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "#2 Задача Б" }).click();
+  await page.getByText("Задача #2", { exact: true }).waitFor();
+  assert.equal(await description.inputValue(), "Другая");
+  await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  await page.getByRole("button", { name: "Задача А", exact: true }).click();
+  assert.equal(await title.inputValue(), "Черновик заголовка", "description navigation lost title draft");
+  assert.deepEqual(pageErrors, []);
+  console.log("PASS: description errors preserve draft, retry succeeds and refresh failure is distinct");
+} finally {
+  if (releaseSave) {
+    releaseSave();
+  }
+  if (browser) {
+    await browser.close();
+  }
+  server.kill();
+}

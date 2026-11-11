@@ -69,6 +69,7 @@ jobs:
       - run: node ../scripts/test_login_session_ui.mjs
       - run: node ../scripts/test_title_save_ui.mjs
       - run: node ../scripts/test_description_draft_ui.mjs
+      - run: node ../scripts/test_description_error_ui.mjs
 
   compose:
     runs-on: ubuntu-latest
