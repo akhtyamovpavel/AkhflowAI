@@ -1361,6 +1361,45 @@ type TaskCreationStore = {
 
 const taskCreationDrafts = new Map<string, TaskCreationStore>();
 
+type ChatMessageDraft = {
+  text: string;
+  revision: number;
+  pending: boolean;
+};
+
+type ChatMessageDraftStore = {
+  snapshot: Record<number, ChatMessageDraft>;
+  listeners: Set<() => void>;
+};
+
+const chatMessageDrafts = new Map<string, ChatMessageDraftStore>();
+
+function useChatMessageDrafts(token: string, project: string) {
+  const context = JSON.stringify([token, project]);
+  let store = chatMessageDrafts.get(context);
+  if (!store) {
+    store = { snapshot: {}, listeners: new Set() };
+    chatMessageDrafts.set(context, store);
+  }
+  const draftStore = store;
+  const subscribe = useCallback((listener: () => void) => {
+    draftStore.listeners.add(listener);
+    return () => { draftStore.listeners.delete(listener); };
+  }, [draftStore]);
+  const getSnapshot = useCallback(() => draftStore.snapshot, [draftStore]);
+  const drafts = useSyncExternalStore(subscribe, getSnapshot);
+  const update = (chatId: number, patch: Partial<ChatMessageDraft>) => {
+    const current = draftStore.snapshot[chatId] ?? { text: "", revision: 0, pending: false };
+    draftStore.snapshot = { ...draftStore.snapshot, [chatId]: { ...current, ...patch } };
+    draftStore.listeners.forEach((listener) => listener());
+  };
+  const edit = (chatId: number, text: string) => {
+    const revision = (draftStore.snapshot[chatId]?.revision ?? 0) + 1;
+    update(chatId, { text, revision });
+  };
+  return { drafts, store: draftStore, update, edit };
+}
+
 type ChatCreationDraft = {
   key: string | null;
   pending: boolean;
@@ -1512,14 +1551,12 @@ function ProjectWorkspace({
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
   const [messageErrors, setMessageErrors] = useState<Record<number, boolean>>({});
   const [messageLoading, setMessageLoading] = useState<Record<number, boolean>>({});
-  const [busyChats, setBusyChats] = useState<Set<number>>(() => new Set());
-  const pendingChats = useRef(new Set<number>());
   const messageRequests = useRef(new Map<number, number>());
   const messageControllers = useRef(new Map<number, AbortController>());
   const sendControllers = useRef(new Map<number, AbortController>());
   const activeChatRef = useRef(activeChat);
   activeChatRef.current = activeChat;
-  const [input, setInput] = useState("");
+  const chatDrafts = useChatMessageDrafts(token, project);
   const sendGuard = useAgentMessageGuard(token, project, activeChat);
   useEffect(() => {
     return () => {
@@ -1664,7 +1701,7 @@ function ProjectWorkspace({
 
   const loadMessages = useCallback(
     async (chatId: number) => {
-      if (!mounted.current || pendingChats.current.has(chatId)) {
+      if (!mounted.current || chatDrafts.store.snapshot[chatId]?.pending) {
         return false;
       }
       const request = (messageRequests.current.get(chatId) ?? 0) + 1;
@@ -1692,7 +1729,7 @@ function ProjectWorkspace({
         }
       }
     },
-    [token, workspaceApi],
+    [token, workspaceApi, chatDrafts.store],
   );
 
   useEffect(() => {
@@ -1707,6 +1744,23 @@ function ProjectWorkspace({
       messageRequests.current.set(activeChat, (messageRequests.current.get(activeChat) ?? 0) + 1);
     };
   }, [activeChat, loadMessages]);
+
+  const activeChatPending = activeChat ? chatDrafts.drafts[activeChat]?.pending ?? false : false;
+  const waitingForChat = useRef<number | null>(null);
+  useEffect(() => {
+    if (!activeChat) {
+      waitingForChat.current = null;
+      return;
+    }
+    if (activeChatPending) {
+      waitingForChat.current = activeChat;
+      return;
+    }
+    if (waitingForChat.current === activeChat && !messagesByChat[activeChat]) {
+      void loadMessages(activeChat);
+    }
+    waitingForChat.current = null;
+  }, [activeChat, activeChatPending, loadMessages, messagesByChat]);
 
   const loadEpics = useCallback(async () => {
     if (!token || !project || !mounted.current) return;
@@ -2045,18 +2099,15 @@ function ProjectWorkspace({
   };
 
   const askAgent = async () => {
-    if (!input.trim() || !activeChat || pendingChats.current.has(activeChat) || !messagesByChat[activeChat]) return;
-    if (!sendGuard.state?.ready || sendGuard.state.pending || sendGuard.state.storageError) return;
+    if (!activeChat || !messagesByChat[activeChat]) return;
     const chatId = activeChat;
-    const text = input.trim();
-    pendingChats.current.add(chatId);
+    const draft = chatDrafts.store.snapshot[chatId];
+    if (!draft || !draft.text.trim() || draft.pending) return;
+    if (!sendGuard.state?.ready || sendGuard.state.pending || sendGuard.state.storageError) return;
+    const text = draft.text.trim();
     const operation = sendGuard.remember(text);
-    if (!operation) {
-      pendingChats.current.delete(chatId);
-      return;
-    }
-    setInput("");
-    setBusyChats((current) => new Set(current).add(chatId));
+    if (!operation) return;
+    chatDrafts.update(chatId, { text: "", revision: draft.revision + 1, pending: true });
     messageControllers.current.get(chatId)?.abort();
     messageRequests.current.set(chatId, (messageRequests.current.get(chatId) ?? 0) + 1);
     setMessageLoading((current) => ({ ...current, [chatId]: false }));
@@ -2085,14 +2136,7 @@ function ProjectWorkspace({
       // A failed response does not prove that the agent did not act.
     } finally {
       if (sendControllers.current.get(chatId) === controller) sendControllers.current.delete(chatId);
-      pendingChats.current.delete(chatId);
-      if (mounted.current) {
-        setBusyChats((current) => {
-          const next = new Set(current);
-          next.delete(chatId);
-          return next;
-        });
-      }
+      chatDrafts.update(chatId, { pending: false });
     }
     if (sent && mounted.current && activeChatRef.current === chatId) {
       void loadMessages(chatId);
@@ -2103,12 +2147,13 @@ function ProjectWorkspace({
 
   const checkUncertainMessage = async () => {
     const pending = sendGuard.state?.pending;
-    if (!activeChat || !pending || busyChats.has(activeChat)) return;
+    if (!activeChat || !pending || chatDrafts.store.snapshot[activeChat]?.pending) return;
     if (await loadMessages(activeChat)) sendGuard.markChecked(pending.id);
   };
 
   const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];
-  const busy = activeChat ? busyChats.has(activeChat) : false;
+  const busy = activeChat ? chatDrafts.drafts[activeChat]?.pending ?? false : false;
+  const input = activeChat ? chatDrafts.drafts[activeChat]?.text ?? "" : "";
 
   return (
     <div className="min-h-screen bg-background">
@@ -2525,7 +2570,7 @@ function ProjectWorkspace({
                     <div className="flex gap-2">
                     <Input
                       value={input}
-                      onChange={(e) => setInput(e.target.value)}
+                      onChange={(e) => chatDrafts.edit(activeChat, e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && askAgent()}
                       placeholder="Скажи агенту, что сделать..."
                     />
