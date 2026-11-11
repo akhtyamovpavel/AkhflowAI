@@ -52,6 +52,9 @@ try {
     if (path === "/api/chats/1/runs" && request.method() === "GET") data = runList;
     if (path === "/api/chats/1/runs" && request.method() === "POST") {
       const key = request.headers()["idempotency-key"];
+      if (response === "accepted") {
+        await delay(500);
+      }
       const marker = await page.evaluate(() => {
         const name = Object.keys(localStorage).find((item) => item.includes("akhflow.pendingAgentMessage") && !item.endsWith(".acknowledged"));
         return name ? JSON.parse(localStorage.getItem(name)) : null;
@@ -74,6 +77,18 @@ try {
   const alert = page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" });
   const check = page.getByRole("button", { name: "Проверить запуск" });
   const retry = page.getByRole("button", { name: "Повторить проверенную отправку" });
+  const retrySend = async () => {
+    const accepted = page.waitForResponse((result) => {
+      const request = result.request();
+      return new URL(result.url()).pathname === "/api/chats/1/runs" && request.method() === "POST" && result.status() === 202;
+    });
+    await retry.click();
+    await accepted;
+    await page.waitForFunction(() => {
+      return !Object.keys(localStorage).some((name) => name.includes("akhflow.pendingAgentMessage") && !name.endsWith(".acknowledged"));
+    });
+    await alert.waitFor({ state: "hidden" });
+  };
   await input.fill("Первое действие");
   await input.press("Enter");
   await alert.waitFor();
@@ -124,8 +139,7 @@ try {
   await alert.waitFor();
   await check.click();
   response = "accepted";
-  await retry.click();
-  await alert.waitFor({ state: "hidden" });
+  await retrySend();
   assert.equal(posts[0].key, posts[1].key, "explicit retry must use original key");
   const malformed = [
     { status: 200, json: { id: 1, chat_id: 1, status: "queued" } },
@@ -145,8 +159,7 @@ try {
     assert.equal(posts.length, count, "malformed response must keep guard");
     await check.click();
     response = "accepted";
-    await retry.click();
-    await alert.waitFor({ state: "hidden" });
+    await retrySend();
     assert.equal(posts[count - 1].key, posts[count].key);
     assert.equal(await input.inputValue(), "Сохранённый черновик");
   }
