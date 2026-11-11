@@ -155,6 +155,9 @@ func TestRunLeaseAndCancellation(t *testing.T) {
 	if err = db.FinishRunStep(ctx, run.ID, "00000000-0000-4000-8000-000000000003", 1, "succeeded", ""); err == nil {
 		t.Fatal("stale token accepted")
 	}
+	if err = db.FinishRunStep(ctx, run.ID, token, 1, "succeeded", "done"); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.CancelRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +169,8 @@ func TestRunLeaseAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished, err := db.AgentRun(ctx, run.ID)
-	if err != nil || finished.Status != "canceled" || len(finished.Steps) != 1 || finished.Steps[0].Status != "interrupted" {
-		t.Fatalf("canceled partial run: %+v %v", finished, err)
+	if err != nil || finished.Status != "succeeded" || finished.Result == nil || len(finished.Steps) != 1 || finished.Steps[0].Status != "succeeded" {
+		t.Fatalf("late cancellation lost result: %+v %v", finished, err)
 	}
 	if err = db.FinishRun(ctx, run.ID, token, "succeeded", "", result, "done", nil); err == nil {
 		t.Fatal("terminal run overwritten")
@@ -200,6 +203,26 @@ func TestRunLeaseAndCancellation(t *testing.T) {
 	}
 	if err = db.FinishRunStep(ctx, newRun.ID, token, 1, "succeeded", ""); err == nil {
 		t.Fatal("expired lease accepted")
+	}
+	third, err := db.EnqueueRun(ctx, chat, owner, "00000000-0000-4000-8000-000000000006", "third", "third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ClaimRun(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.StartRunStep(ctx, third.ID, token, 1, 1, "create_task"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CancelRun(ctx, third.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.FinishRun(ctx, third.ID, token, "interrupted", "outcome_unknown", nil, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	partial, err := db.AgentRun(ctx, third.ID)
+	if err != nil || partial.Status != "interrupted" || partial.Steps[0].Status != "interrupted" {
+		t.Fatalf("unknown outcome after cancellation: %+v %v", partial, err)
 	}
 }
 
@@ -405,4 +428,92 @@ func TestRunQueueBoundAndAtomicFinish(t *testing.T) {
 	if err != nil || current.Status != "running" || current.Result != nil {
 		t.Fatalf("finish was not atomic: %+v %v", current, err)
 	}
+}
+
+func TestCancelDuringToolMarksUnknown(t *testing.T) {
+	dsn := testdb.Schema(t, "AKHFLOW_TEST_DATABASE_URL")
+	ctx := context.Background()
+	db, err := store.New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := db.CreateUser(ctx, "cancel-running@example.invalid", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := db.CreateProject(ctx, "cancel-running", "Cancel", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := db.CreateChat(ctx, project, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, `CREATE FUNCTION block_run_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(809021); RETURN NEW; END $$`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = conn.Exec(ctx, `CREATE TRIGGER block_run_task BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION block_run_task()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = conn.Exec(ctx, `SELECT pg_advisory_lock(809021)`); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Exec(ctx, `SELECT pg_advisory_unlock(809021)`)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"1","type":"function","function":{"name":"create_task","arguments":"{\"project\":\"cancel-running\",\"title\":\"effect\"}"}}]}}]}`)
+	}))
+	defer model.Close()
+	run, err := db.EnqueueRun(ctx, chat, owner, "00000000-0000-4000-8000-000000000001", "hello", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(db, nil, llm.NewClient(model.URL, "test"), nil)
+	workerCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); server.RunAgentWorker(workerCtx) }()
+	defer func() { stop(); <-done }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		current, err := db.AgentRun(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(current.Steps) > 0 && current.Steps[0].Status == "running" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	current, err := db.AgentRun(ctx, run.ID)
+	if err != nil || len(current.Steps) == 0 {
+		t.Fatal("tool did not start")
+	}
+	if err = db.CancelRun(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		current, err = db.AgentRun(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Status == "interrupted" {
+			if current.Steps[0].Status != "interrupted" {
+				t.Fatal("step outcome was hidden")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("cancel outcome: %+v", current)
 }

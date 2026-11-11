@@ -249,7 +249,7 @@ func (s *Store) FinishRun(ctx context.Context, id int64, token, status, code str
 	if code != "" {
 		errorCode = code
 	}
-	query := `UPDATE agent_runs SET status=CASE WHEN cancel_requested THEN 'canceled' ELSE $3 END,error_code=CASE WHEN cancel_requested THEN NULL ELSE $4 END,result=CASE WHEN cancel_requested THEN NULL ELSE $5::jsonb END,iteration=COALESCE(($5::jsonb->>'iterations')::integer,iteration),finished_at=now(),lease_token=NULL,lease_until=NULL,tool=NULL WHERE id=$1 AND lease_token=$2::uuid AND status='running' AND lease_until>now() RETURNING chat_id,status`
+	query := `UPDATE agent_runs SET status=$3,error_code=$4,result=$5::jsonb,iteration=COALESCE(($5::jsonb->>'iterations')::integer,iteration),finished_at=now(),lease_token=NULL,lease_until=NULL,tool=NULL WHERE id=$1 AND lease_token=$2::uuid AND status='running' AND lease_until>now() RETURNING chat_id,status`
 	var chatID int64
 	var finalStatus string
 	if err = tx.QueryRow(ctx, query, id, token, status, errorCode, encoded).Scan(&chatID, &finalStatus); err != nil {

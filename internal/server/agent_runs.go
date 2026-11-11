@@ -247,7 +247,11 @@ func (s *Server) executeRun(parent context.Context, run *store.AgentRun, token s
 		current, checkErr := s.Store.AgentRun(checkCtx, run.ID)
 		stopCheck()
 		if current != nil && current.CancelRequested {
-			s.finishRun(run, token, "canceled", "", nil)
+			if stepsStarted > 0 {
+				s.finishRun(run, token, "interrupted", "outcome_unknown", nil)
+			} else {
+				s.finishRun(run, token, "canceled", "", nil)
+			}
 		} else if ctx.Err() != nil || stepPersistenceFailed || (checkErr != nil && stepsStarted > 0) {
 			s.finishRun(run, token, "interrupted", "execution_interrupted", nil)
 		} else {
