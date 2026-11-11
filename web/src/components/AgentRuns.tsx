@@ -7,7 +7,7 @@ type Run = {
   status: string;
   cancel_requested: boolean;
   step: { iteration: number; max_iterations: number; tool?: string };
-  steps: { sequence: number; summary: string }[];
+  steps: { sequence: number; status: string; summary: string }[];
 };
 
 type Request = (path: string, options?: RequestInit, token?: string | null, expectedStatus?: number) => Promise<any>;
@@ -88,7 +88,11 @@ export function AgentRuns({ chatId, token, request, refresh, revision }: {
         <div key={run.id} className="rounded-md border p-2 text-sm">
           <span>{labels[run.status] ?? "Состояние неизвестно"}</span>
           {run.status === "running" && run.step && <span> · шаг {run.step.iteration} из {run.step.max_iterations}</span>}
-          {run.steps?.map((step) => step.summary && <p key={step.sequence} className="text-muted-foreground">{step.summary}</p>)}
+          {run.steps?.map((step) => (
+            <p key={step.sequence} className="text-muted-foreground">
+              {step.status === "interrupted" ? "Результат действия не подтверждён" : step.summary}
+            </p>
+          ))}
           {(run.status === "queued" || run.status === "running") && (
             <Button size="sm" variant="outline" className="ml-2" disabled={canceling === run.id || run.cancel_requested} onClick={() => void cancel(run.id)}>
               {run.cancel_requested ? "Отмена запрошена" : "Остановить"}

@@ -70,6 +70,12 @@ try {
   await page.getByRole("button", { name: "Первый" }).click();
   await page.getByRole("button", { name: "Остановить" }).click();
   await page.getByText("Отменено", { exact: false }).waitFor();
+  runs[0].status = "interrupted";
+  runs[0].steps = [{ sequence: 1, status: "interrupted", summary: "Действие выполняется" }];
+  await page.reload();
+  await page.getByRole("button", { name: "Агент", exact: true }).click();
+  await page.getByText("Результат действия не подтверждён").waitFor();
+  assert.equal(await page.getByText("Действие выполняется").count(), 0);
   runs[0].status = "step_limit";
   await page.reload();
   await page.getByRole("button", { name: "Агент", exact: true }).click();
