@@ -41,6 +41,14 @@ printf '%s\n%s\n' \
 - Generate separate random values for `JWT_SECRET` and `MCP_API_KEY` in the ignored `.env`; Compose requires `JWT_SECRET`. Optional UI text linting in `scripts/smoke_deadlines.mjs` uses `TEXT_LINT_SCRIPT` and `PYTHON_BIN`.
 - Trello import uses `TRELLO_API_KEY`, `TRELLO_API_TOKEN`, and `TRELLO_IMPORT_USER_ID` from server environment. Set the user ID to the account authorized to use those credentials; other users cannot import with them. Open Trello lists become epics, open cards become backlog tasks, and re-import skips existing cards without overwriting local edits. Open cards from lists absent in the response use an existing imported epic when available; otherwise they are imported without an epic and counted in the result. Card pages overlap on the creation-time boundary to avoid skipping same-second cards; if Trello cannot advance beyond a full second, the import fails without saving partial results. Credentials are never sent through the agent or stored in task history.
 
+## Codex model selection
+
+- Use the High model tier for the primary coordinating agent and the Low model tier for all subagents, including implementers and independent reviewers, to conserve resources.
+- High and Low are roles, not model names. Use the concrete model mapping supplied by the user for the current session or environment; do not hard-code provider-specific model names in these instructions.
+- Select the configured Low model explicitly when spawning a subagent. If a model override requires a fresh context, use `fork_turns="none"` and include the task, relevant instructions, worktree and acceptance criteria in the handoff.
+- Do not reuse a subagent outside the configured Low tier for new work. If the mapping is missing or the selected model is unavailable, clarify the mapping before substituting another model.
+- These preferences apply to Codex development agents; the application's own LLM configuration is managed separately.
+
 ## Git workflow
 
 - Each issue gets its own Git worktree and branch. Select tracker issues from the primary worktree, then implement and verify each issue in its dedicated worktree under `.worktrees/`.
