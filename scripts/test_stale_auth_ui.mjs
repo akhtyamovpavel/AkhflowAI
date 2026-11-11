@@ -77,6 +77,9 @@ try {
       if (path.includes("/agent/usage") && window.usageMode === "invalid") {
         return Promise.resolve(unauthorized());
       }
+      if (path.includes("/agent/usage") && window.usageMode === "unavailable") {
+        return Promise.resolve(new Response('{"error":"authentication temporarily unavailable"}', { status: 503 }));
+      }
       if (path.endsWith("/beta/chats") && window.holdChats && token === "Bearer fixture-account-b") {
         return new Promise((resolve) => window.pendingChats.push(() => resolve(unauthorized())));
       }
@@ -125,12 +128,19 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem("akhflow.token")), "fixture-account-c", "old request in another tab logged out the new account");
   await second.getByText("Task Bearer fixture-account-c", { exact: true }).first().waitFor();
 
+  await page.evaluate(() => { window.usageMode = "unavailable"; });
+  await page.getByRole("button", { name: "Агент", exact: true }).click();
+  await page.getByText("Не удалось загрузить метрики агента.").waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem("akhflow.token")), "fixture-account-c", "temporary failure removed the token");
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("test-navigation-count")), "1", "temporary failure reloaded the page");
+  await page.getByRole("button", { name: "Канбан", exact: true }).click();
+
   await page.evaluate(() => { window.usageMode = "invalid"; });
   await page.getByRole("button", { name: "Агент", exact: true }).click();
   await page.getByPlaceholder("Email").waitFor();
   await second.getByPlaceholder("Email").waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("akhflow.token")), null, "current 401 must log out");
-  console.log("PASS: stale and cancelled 401, cross-tab account changes, current 401");
+  console.log("PASS: stale and cancelled 401, cross-tab changes, temporary failure, current 401");
 } finally {
   if (browser) await browser.close();
   server.kill();
