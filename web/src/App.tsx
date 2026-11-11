@@ -1497,7 +1497,7 @@ function ProjectWorkspace({
       const title = current.revision === submitted.revision ? "" : current.title;
       creation.update({ title, created: current.created + 1 });
     } catch {
-      creation.update({ error: `Не удалось создать задачу «${submitted.title}». Введённый текст сохранён. Попробуй ещё раз.` });
+      creation.update({ error: `Не удалось подтвердить создание задачи «${submitted.title}». Проверь список перед повторной отправкой. Введённый текст сохранён.` });
     } finally {
       creation.update({ pending: false });
     }
@@ -1743,7 +1743,14 @@ function ProjectWorkspace({
           <Button size="sm" disabled={creation.draft.pending || !project || !creation.draft.title.trim()} onClick={() => void createTask()}><Plus /> Добавить</Button>
         </div>
         {creation.draft.pending && <p role="status" className="text-sm text-muted-foreground">Создаём задачу...</p>}
-        {creation.draft.error && <p role="alert" className="text-sm text-destructive">{creation.draft.error}</p>}
+        {creation.draft.error && (
+          <div role="alert" className="text-sm text-destructive">
+            {creation.draft.error}
+            <Button size="sm" variant="ghost" onClick={() => {
+              void loadTasks().catch(() => setCreateRefreshError("Не удалось обновить список. Попробуй ещё раз."));
+            }}>Проверить список задач</Button>
+          </div>
+        )}
         {createRefreshError && (
           <div role="alert" className="text-sm text-destructive">
             {createRefreshError}

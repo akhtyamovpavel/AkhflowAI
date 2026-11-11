@@ -71,6 +71,10 @@ try {
       }
       const task = { id: tasks.length + 1, title, project, account, status: "backlog", priority: "medium" };
       tasks.push(task);
+      if (result === "accepted-network") {
+        await route.abort("failed");
+        return;
+      }
       await route.fulfill({ json: task });
       return;
     }
@@ -94,7 +98,7 @@ try {
   const input = page.getByPlaceholder("Новая задача...");
   const add = page.getByRole("button", { name: "Добавить", exact: true });
   const pending = page.getByRole("status").filter({ hasText: "Создаём задачу" });
-  const failed = page.getByRole("alert").filter({ hasText: "Не удалось создать задачу" });
+  const failed = page.getByRole("alert").filter({ hasText: "Не удалось подтвердить создание задачи" });
   const switchProject = async (project) => {
     await page.locator("header select").first().selectOption(project);
     await input.waitFor();
@@ -159,6 +163,18 @@ try {
   await add.click();
   await page.getByRole("button", { name: "Retry failure", exact: true }).waitFor();
   await failed.waitFor({ state: "hidden" });
+
+  behavior = "accepted-network";
+  await input.fill("Created despite connection loss");
+  await add.click();
+  await failed.waitFor();
+  assert.ok((await failed.innerText()).includes("Проверь список перед повторной отправкой"));
+  assert.equal(await input.inputValue(), "Created despite connection loss");
+  const writesBeforeCheck = writes.length;
+  await page.getByRole("button", { name: "Проверить список задач", exact: true }).click();
+  await page.getByRole("button", { name: "Created despite connection loss", exact: true }).waitFor();
+  assert.equal(writes.length, writesBeforeCheck, "checking uncertain creation repeated POST");
+  assert.equal(await input.inputValue(), "Created despite connection loss");
 
   await holdCreate("Project request");
   await input.fill("Alpha draft");
