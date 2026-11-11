@@ -776,18 +776,15 @@ var Registry = []Tool{
 			if !member {
 				return Result{}, fmt.Errorf("access denied to task %d", id)
 			}
-			dependents, err := d.Store.DependentsDetail(ctx, id)
-			if err != nil {
-				return Result{}, err
-			}
-			if len(dependents) > 0 {
-				titles := make([]string, 0, len(dependents))
-				for _, dep := range dependents {
-					titles = append(titles, fmt.Sprintf("#%d %s", dep.ID, dep.Title))
-				}
-				return Result{}, fmt.Errorf("task %d blocks other tasks: %s", id, strings.Join(titles, ", "))
-			}
 			if err := d.Store.DeleteTask(ctx, id); err != nil {
+				var blocked *store.TaskBlockedError
+				if errors.As(err, &blocked) {
+					titles := make([]string, 0, len(blocked.Dependents))
+					for _, dep := range blocked.Dependents {
+						titles = append(titles, fmt.Sprintf("#%d %s", dep.ID, dep.Title))
+					}
+					return Result{}, fmt.Errorf("task %d blocks other tasks: %s", id, strings.Join(titles, ", "))
+				}
 				return Result{}, err
 			}
 			eid := id
