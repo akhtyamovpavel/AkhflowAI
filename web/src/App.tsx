@@ -1360,6 +1360,86 @@ type TaskCreationStore = {
 
 const taskCreationDrafts = new Map<string, TaskCreationStore>();
 
+type ChatCreationDraft = {
+  key: string | null;
+  pending: boolean;
+  error: boolean;
+  storageError: boolean;
+  created: number | null;
+  selectedAtStart: number | null;
+};
+
+type ChatCreationStore = {
+  snapshot: ChatCreationDraft;
+  listeners: Set<() => void>;
+  controller: AbortController | null;
+};
+
+const chatCreationDrafts = new Map<string, ChatCreationStore>();
+
+function chatCreationStorageKey(token: string, project: string): string | null {
+  try {
+    const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const subject: unknown = JSON.parse(atob(payload)).sub;
+    if (typeof subject !== "string" || !/^\d+$/.test(subject)) return null;
+    return JSON.stringify(["akhflow.pendingChatCreation", subject, project]);
+  } catch {
+    return null;
+  }
+}
+
+function createChatKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function useChatCreationDraft(token: string, project: string) {
+  const context = JSON.stringify([token, project]);
+  const storageKey = chatCreationStorageKey(token, project);
+  let store = chatCreationDrafts.get(context);
+  if (!store) {
+    let key: string | null = null;
+    try {
+      if (storageKey) key = sessionStorage.getItem(storageKey);
+    } catch {
+      key = null;
+    }
+    store = {
+      snapshot: { key, pending: false, error: !!key, storageError: false, created: null, selectedAtStart: null },
+      listeners: new Set(),
+      controller: null,
+    };
+    chatCreationDrafts.set(context, store);
+  }
+  const draftStore = store;
+  const subscribe = useCallback((listener: () => void) => {
+    draftStore.listeners.add(listener);
+    return () => { draftStore.listeners.delete(listener); };
+  }, [draftStore]);
+  const getSnapshot = useCallback(() => draftStore.snapshot, [draftStore]);
+  const draft = useSyncExternalStore(subscribe, getSnapshot);
+  const update = (patch: Partial<ChatCreationDraft>) => {
+    draftStore.snapshot = { ...draftStore.snapshot, ...patch };
+    draftStore.listeners.forEach((listener) => listener());
+  };
+  const persist = (key: string) => {
+    if (!storageKey) return;
+    sessionStorage.setItem(storageKey, key);
+  };
+  const clear = (key: string) => {
+    if (!storageKey) return;
+    try {
+      if (sessionStorage.getItem(storageKey) === key) sessionStorage.removeItem(storageKey);
+    } catch {
+      // The in-memory operation remains available when storage is unavailable.
+    }
+  };
+  return { draft, store: draftStore, update, persist, clear };
+}
+
 function useTaskCreationDraft(token: string, project: string) {
   const key = JSON.stringify([token, project]);
   let store = taskCreationDrafts.get(key);
@@ -1439,6 +1519,10 @@ function ProjectWorkspace({
   activeChatRef.current = activeChat;
   const [input, setInput] = useState("");
   const creation = useTaskCreationDraft(token, project);
+  const chatCreation = useChatCreationDraft(token, project);
+  useEffect(() => {
+    return () => { chatCreation.store.controller?.abort(); };
+  }, [chatCreation.store]);
   const [createRefreshError, setCreateRefreshError] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -1555,6 +1639,20 @@ function ProjectWorkspace({
       if (isCurrent()) setChatsLoading(false);
     }
   }, [token, project, workspaceApi]);
+
+  useEffect(() => {
+    const result = chatCreation.draft.created;
+    if (result === null || !mounted.current || localStorage.getItem("akhflow.token") !== token) return;
+    if (chatCreation.store.snapshot.created !== result) return;
+    const selectedAtStart = chatCreation.store.snapshot.selectedAtStart;
+    chatCreation.update({ created: null });
+    setChats((current) => {
+      if (current.some((chat) => chat.id === result)) return current;
+      return [{ id: result, title: "", created_at: "" }, ...current];
+    });
+    if (activeChatRef.current === selectedAtStart) setActiveChat(result);
+    void loadChats();
+  }, [chatCreation.draft.created, chatCreation.store, loadChats, token]);
 
   const loadMessages = useCallback(
     async (chatId: number) => {
@@ -1908,10 +2006,32 @@ function ProjectWorkspace({
   };
 
   const newChat = async () => {
-    if (!project) return;
-    const data = await workspaceApi(`/api/projects/${project}/chats`, { method: "POST", body: "{}" }, token);
-    await loadChats();
-    setActiveChat(data.id);
+    if (!project || chatCreation.store.snapshot.pending) return;
+    let key = chatCreation.store.snapshot.key;
+    try {
+      if (!key) {
+        key = createChatKey();
+        chatCreation.persist(key);
+      }
+    } catch {
+      chatCreation.update({ error: true, storageError: true });
+      return;
+    }
+    const controller = new AbortController();
+    chatCreation.store.controller = controller;
+    chatCreation.update({ key, pending: true, error: false, storageError: false, selectedAtStart: activeChatRef.current });
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/chats`;
+      const options = { method: "POST", body: "{}", headers: { "Idempotency-Key": key }, signal: controller.signal };
+      const data = await workspaceApi(path, options, token);
+      if (!Number.isSafeInteger(data.id) || data.id <= 0) throw new Error("invalid chat id");
+      chatCreation.clear(key);
+      chatCreation.update({ key: null, pending: false, error: false, created: data.id });
+    } catch {
+      chatCreation.update({ pending: false, error: true });
+    } finally {
+      if (chatCreation.store.controller === controller) chatCreation.store.controller = null;
+    }
   };
 
   const askAgent = async () => {
@@ -2280,9 +2400,17 @@ function ProjectWorkspace({
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-base">Чаты</CardTitle>
-                <Button size="sm" variant="outline" onClick={newChat}><Plus /></Button>
+                <Button size="sm" variant="outline" aria-label="Создать чат" disabled={!project || chatCreation.draft.pending || !!chatCreation.draft.key} onClick={newChat}><Plus /></Button>
               </CardHeader>
               <CardContent className="space-y-1 p-3">
+                {chatCreation.draft.error && (
+                  <div role="alert" className="space-y-2 text-sm text-destructive">
+                    {chatCreation.draft.storageError
+                      ? <p>Не удалось подготовить создание чата. Проверь доступ к хранилищу браузера.</p>
+                      : <p>Не удалось подтвердить создание чата. Повтори попытку: дубликат не появится.</p>}
+                    <Button size="sm" variant="outline" disabled={chatCreation.draft.pending} onClick={newChat}>Повторить создание</Button>
+                  </div>
+                )}
                 {chatsError && (
                   <div role="alert" className="space-y-2 text-sm text-destructive">
                     <p>Не удалось загрузить чаты.</p>
