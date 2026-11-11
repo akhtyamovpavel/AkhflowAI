@@ -252,6 +252,8 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
   const [name, setName] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
   const [err, setErr] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const registrationPending = useRef(false);
   const loginRequest = useRef(0);
   useEffect(() => {
     const invalidateLogin = (event: StorageEvent) => {
@@ -266,6 +268,12 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
     };
   }, []);
   const submit = async () => {
+    const isRegistration = mode === "register";
+    if (isRegistration && registrationPending.current) return;
+    if (isRegistration) {
+      registrationPending.current = true;
+      setRegistering(true);
+    }
     const request = ++loginRequest.current;
     const initialToken = localStorage.getItem("akhflow.token");
     const isCurrent = () => request === loginRequest.current && localStorage.getItem("akhflow.token") === initialToken;
@@ -285,6 +293,11 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
           : e.message;
         setErr(message);
       }
+    } finally {
+      if (isRegistration) {
+        registrationPending.current = false;
+        setRegistering(false);
+      }
     }
   };
   return (
@@ -298,15 +311,15 @@ function Login({ onLogin }: { onLogin: (t: string) => void }) {
         </CardHeader>
         <CardContent className="space-y-3">
           {mode === "register" && (
-            <Input placeholder="Имя" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input placeholder="Имя" value={name} disabled={registering} onChange={(e) => setName(e.target.value)} />
           )}
-          <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Input type="password" placeholder="Пароль" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input type="email" placeholder="Email" value={email} disabled={registering} onChange={(e) => setEmail(e.target.value)} />
+          <Input type="password" placeholder="Пароль" value={password} disabled={registering} onChange={(e) => setPassword(e.target.value)} />
           {err && <p className="text-sm text-destructive">{err}</p>}
-          <Button className="w-full" onClick={submit}>
+          <Button className="w-full" onClick={submit} disabled={registering}>
             {mode === "login" ? "Войти" : "Создать аккаунт"}
           </Button>
-          <Button variant="ghost" className="w-full" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+          <Button variant="ghost" className="w-full" disabled={registering} onClick={() => setMode(mode === "login" ? "register" : "login")}>
             {mode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Есть аккаунт? Войти"}
           </Button>
         </CardContent>
