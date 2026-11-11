@@ -27,6 +27,7 @@ export function TaskAttachments({ taskId, token, apiBase, project }: Props) {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState("");
   const roleRequest = useRef(0);
+  const attachmentRequest = useRef(0);
   const endpoint = `${apiBase}/api/tasks/${taskId}/attachments`;
   const canUpload = ["owner", "admin", "editor", "member"].includes(role);
 
@@ -62,32 +63,45 @@ export function TaskAttachments({ taskId, token, apiBase, project }: Props) {
     if (!canUpload) setFile(null);
   }, [canUpload]);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal,
-    });
-    if (!response.ok) {
-      throw new Error("Не удалось загрузить список вложений.");
+  const load = useCallback(async (signal?: AbortSignal, afterUpload = false) => {
+    const current = ++attachmentRequest.current;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error("attachment lookup failed");
+      }
+      const data: Attachment[] = await response.json();
+      if (attachmentRequest.current === current && !signal?.aborted) {
+        setAttachments(data);
+      }
+    } catch {
+      if (attachmentRequest.current === current && !signal?.aborted) {
+        if (afterUpload) {
+          setError("Файл загружен, но список вложений не обновился.");
+        } else {
+          setError("Не удалось загрузить список вложений.");
+        }
+      }
+    } finally {
+      if (attachmentRequest.current === current && !signal?.aborted) {
+        setLoading(false);
+      }
     }
-    const data: Attachment[] = await response.json();
-    setAttachments(data);
   }, [endpoint, token]);
 
   useEffect(() => {
     if (!token) return;
     const controller = new AbortController();
-    setLoading(true);
-    load(controller.signal).catch(() => {
-      if (!controller.signal.aborted) {
-        setError("Не удалось загрузить список вложений.");
-      }
-    }).finally(() => {
-      if (!controller.signal.aborted) {
-        setLoading(false);
-      }
-    });
-    return () => controller.abort();
+    void load(controller.signal);
+    return () => {
+      attachmentRequest.current++;
+      controller.abort();
+    };
   }, [load, token]);
 
   const upload = async (event: FormEvent) => {
@@ -113,11 +127,7 @@ export function TaskAttachments({ taskId, token, apiBase, project }: Props) {
       }
       setFile(null);
       setInputKey((value) => value + 1);
-      try {
-        await load();
-      } catch {
-        setError("Файл загружен, но список вложений не обновился.");
-      }
+      await load(undefined, true);
     } catch {
       setError("Не удалось загрузить файл. Попробуй ещё раз.");
     } finally {
