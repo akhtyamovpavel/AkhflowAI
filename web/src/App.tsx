@@ -1160,6 +1160,11 @@ function AccountWorkspace({ token, saveToken }: {
   const [view, setView] = useState<"kanban" | "list" | "dashboard" | "agent">("kanban");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState("");
+  const [projectsError, setProjectsError] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const projectsRequest = useRef(0);
+  const projectsController = useRef<AbortController | null>(null);
+  const accountMounted = useRef(false);
   const [sharedTask, setSharedTask] = useState<SharedTask | null>(() => readSharedTask(window.location));
 
   const consumeSharedTask = useCallback(() => {
@@ -1178,8 +1183,25 @@ function AccountWorkspace({ token, saveToken }: {
   }, [sharedTask, consumeSharedTask]);
 
   const loadProjects = useCallback(async () => {
-    if (!token) return;
-    const data: Project[] = (await api("/api/projects", {}, token)) ?? [];
+    const request = ++projectsRequest.current;
+    projectsController.current?.abort();
+    const controller = new AbortController();
+    projectsController.current = controller;
+    const isCurrent = () => accountMounted.current && projectsRequest.current === request && localStorage.getItem("akhflow.token") === token;
+    setProjectsLoading(true);
+    let data: Project[];
+    try {
+      data = (await api("/api/projects", { signal: controller.signal }, token)) ?? [];
+    } catch {
+      if (isCurrent()) {
+        setProjectsError(true);
+        setProjectsLoading(false);
+      }
+      return false;
+    }
+    if (!isCurrent()) return false;
+    setProjectsLoading(false);
+    setProjectsError(false);
     setProjects(data);
     if (sharedTask && !data.some((item) => item.slug === sharedTask.project)) {
       consumeSharedTask();
@@ -1195,13 +1217,27 @@ function AccountWorkspace({ token, saveToken }: {
     } else {
       setProject("");
     }
+    return true;
   }, [token, sharedTask, consumeSharedTask]);
 
   useEffect(() => {
-    loadProjects();
+    accountMounted.current = true;
+    void loadProjects();
+    return () => {
+      accountMounted.current = false;
+      projectsRequest.current++;
+      projectsController.current?.abort();
+    };
   }, [loadProjects]);
 
   return (
+    <>
+    {projectsError && (
+      <div role="alert" className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-2 text-sm text-destructive">
+        <span>Не удалось загрузить проекты. Попробуйте ещё раз.</span>
+        <Button size="sm" variant="outline" disabled={projectsLoading} onClick={() => void loadProjects()}>Повторить</Button>
+      </div>
+    )}
     <ProjectWorkspace
       key={`${token}:${project}`}
       token={token}
@@ -1215,6 +1251,7 @@ function AccountWorkspace({ token, saveToken }: {
       sharedTask={sharedTask}
       consumeSharedTask={consumeSharedTask}
     />
+    </>
   );
 }
 
@@ -1264,7 +1301,7 @@ function ProjectWorkspace({
   project: string;
   projects: Project[];
   setProject: (project: string) => void;
-  loadProjects: () => Promise<void>;
+  loadProjects: () => Promise<boolean>;
   view: WorkspaceView;
   setView: (view: WorkspaceView) => void;
   sharedTask: SharedTask | null;
@@ -1602,7 +1639,7 @@ function ProjectWorkspace({
     }, token);
     setShowNewProject(false);
     setNewProjectName("");
-    await loadProjects();
+    if (!await loadProjects()) return;
     if (!mounted.current) return;
     setProject(data.slug);
     localStorage.setItem("akhflow.project", data.slug);
