@@ -12,22 +12,25 @@ import (
 const maxIterations = 8
 
 type AgentDeps struct {
-	Store   interface {
+	Store interface {
 		Audit(ctx context.Context, actor, action, entity string, entityID *int64, payload map[string]any) error
 	}
 	ToolDeps toolbox.Deps
 }
 
 type Agent struct {
-	Client *Client
-	Deps   toolbox.Deps
+	Client     *Client
+	Deps       toolbox.Deps
+	BeforeTool func(iteration, sequence int, name string) error
+	AfterTool  func(iteration, sequence int, name string, ok bool) error
 }
 
 type RunResult struct {
-	Reply     string        `json:"reply"`
-	ToolCalls []ToolCallLog `json:"tool_calls"`
-	Iterations int          `json:"iterations"`
-	Metrics   map[string]int `json:"metrics,omitempty"`
+	Reply      string         `json:"reply"`
+	ToolCalls  []ToolCallLog  `json:"tool_calls"`
+	Iterations int            `json:"iterations"`
+	Metrics    map[string]int `json:"metrics,omitempty"`
+	StepLimit  bool           `json:"-"`
 }
 
 type ToolCallLog struct {
@@ -87,6 +90,12 @@ func (a *Agent) Run(ctx context.Context, userPrompt string, projectSlug string, 
 			return &RunResult{Reply: msg.Content, ToolCalls: log, Iterations: iterations}, nil
 		}
 		for _, tc := range msg.ToolCalls {
+			sequence := len(log) + 1
+			if a.BeforeTool != nil {
+				if err := a.BeforeTool(iterations, sequence, tc.Function.Name); err != nil {
+					return nil, err
+				}
+			}
 			tool := toolbox.ByName(tc.Function.Name)
 			var args json.RawMessage = json.RawMessage(tc.Function.Arguments)
 			var res toolbox.Result
@@ -101,6 +110,11 @@ func (a *Agent) Run(ctx context.Context, userPrompt string, projectSlug string, 
 				}
 			}
 			payload, _ := json.Marshal(res)
+			if a.AfterTool != nil {
+				if err := a.AfterTool(iterations, sequence, tc.Function.Name, res.Ok); err != nil {
+					return nil, err
+				}
+			}
 			log = append(log, ToolCallLog{Tool: tc.Function.Name, Args: string(args), Result: string(payload)})
 			messages = append(messages, Message{
 				Role:       "tool",
@@ -111,8 +125,9 @@ func (a *Agent) Run(ctx context.Context, userPrompt string, projectSlug string, 
 		}
 	}
 	return &RunResult{
-		Reply:     "Превышено число шагов агента, последний ответ модели не получен",
-		ToolCalls: log,
+		Reply:      "Превышено число шагов агента, последний ответ модели не получен",
+		ToolCalls:  log,
 		Iterations: iterations - 1,
+		StepLimit:  true,
 	}, nil
 }
