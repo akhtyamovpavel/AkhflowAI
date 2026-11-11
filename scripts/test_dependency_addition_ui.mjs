@@ -35,6 +35,7 @@ try {
   browser = await playwright.chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
+  page.setDefaultNavigationTimeout(15000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(() => {
@@ -107,13 +108,20 @@ try {
   const busy = page.getByRole("status").filter({ hasText: "Обновляем зависимости" });
   const refresh = page.getByRole("button", { name: "Обновить связи", exact: true });
 
+  mode = "hold";
   await select.selectOption("2");
   await add.click();
+  while (!releaseAdd) {
+    await delay(10);
+  }
+  await select.selectOption("3");
+  releaseAdd("conflict");
   await page.getByRole("alert").filter({ hasText: "связь создаёт цикл" }).waitFor();
-  assert.equal(await select.inputValue(), "2", "409 erased dependency selection");
+  assert.equal(await select.inputValue(), "3", "409 erased the newer dependency selection");
   assert.equal(dependencies.length, 0);
 
   mode = "server";
+  await select.selectOption("2");
   await add.click();
   await uncertain.waitFor();
   assert.equal(await select.inputValue(), "2", "500 erased dependency selection");
@@ -139,23 +147,26 @@ try {
   assert.equal(await select.inputValue(), "3");
 
   mode = "hold";
+  releaseAdd = undefined;
   const beforePending = writes.length;
   await add.dblclick({ force: true });
   await busy.waitFor();
   while (!releaseAdd) {
     await delay(10);
   }
-  assert.equal(await select.isDisabled(), true);
+  assert.equal(await select.isDisabled(), false);
   assert.equal(await add.isDisabled(), true);
   assert.equal(writes.length, beforePending + 1, "double click duplicated dependency POST");
+  await select.selectOption("4");
+  assert.equal(await add.isDisabled(), false, "new dependency selection should remain available");
   releaseAdd("accepted-network");
   await uncertain.waitFor();
-  assert.equal(await select.inputValue(), "3");
+  assert.equal(await select.inputValue(), "4", "uncertain response erased the newer selection");
   const beforeAcceptedCheck = writes.length;
   await refresh.click();
   await page.getByRole("button", { name: "#3 Candidate 3", exact: true }).waitFor();
   await busy.waitFor({ state: "hidden" });
-  assert.equal(await select.inputValue(), "", "confirmed dependency remained selectable");
+  assert.equal(await select.inputValue(), "4", "checking previous dependency erased the newer selection");
   assert.equal(writes.length, beforeAcceptedCheck, "confirmation check wrote another dependency");
   assert.equal(await page.getByRole("alert").count(), 0);
 
