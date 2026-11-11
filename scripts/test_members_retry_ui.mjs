@@ -98,6 +98,7 @@ try {
   assert.equal(await assignee.isDisabled(), false);
 
   await page.getByRole("button", { name: "Закрыть карточку задачи" }).click();
+  await page.evaluate(() => { window.memberMode = "success"; });
   await page.getByRole("button", { name: "Участники и роли" }).click();
   await page.getByLabel("Email зарегистрированного пользователя").fill("new@example.invalid");
   await page.evaluate(() => { window.memberMode = "fail"; });

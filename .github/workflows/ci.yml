@@ -69,6 +69,7 @@ jobs:
       - run: node ../scripts/test_projects_retry_ui.mjs
       - run: node ../scripts/test_chat_messages_retry_ui.mjs
       - run: node ../scripts/test_chats_retry_ui.mjs
+      - run: node ../scripts/test_member_save_refresh_ui.mjs
       - run: node ../scripts/test_epics_retry_ui.mjs
       - run: node ../scripts/test_members_retry_ui.mjs
       - run: node ../scripts/test_tasks_retry_ui.mjs
