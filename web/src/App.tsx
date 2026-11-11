@@ -1388,12 +1388,16 @@ function ProjectWorkspace({
   const mounted = useRef(false);
   const taskRequest = useRef(0);
   const taskController = useRef<AbortController | null>(null);
+  const chatsRequest = useRef(0);
+  const chatsController = useRef<AbortController | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       taskRequest.current++;
       taskController.current?.abort();
+      chatsRequest.current++;
+      chatsController.current?.abort();
     };
   }, []);
   const workspaceApi = useCallback<ApiRequest>((path, options, requestToken) => {
@@ -1407,6 +1411,9 @@ function ProjectWorkspace({
   const [tasksError, setTasksError] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [chats, setChats] = useState<ChatSession[]>([]);
+  const [chatsError, setChatsError] = useState(false);
+  const [chatsLoading, setChatsLoading] = useState(false);
+  const [chatsLoaded, setChatsLoaded] = useState(false);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
   const [busyChats, setBusyChats] = useState<Set<number>>(() => new Set());
@@ -1502,13 +1509,29 @@ function ProjectWorkspace({
   }, [token, project, workspaceApi]);
 
   const loadChats = useCallback(async () => {
-    if (!token || !project) return;
-    const data: ChatSession[] = (await workspaceApi(`/api/projects/${project}/chats`, {}, token)) ?? [];
-    setChats(data);
-    setActiveChat((prev) => {
-      if (prev && data.some((c) => c.id === prev)) return prev;
-      return data.length > 0 ? data[0].id : null;
-    });
+    if (!mounted.current || !token || !project) return;
+    const request = ++chatsRequest.current;
+    chatsController.current?.abort();
+    const controller = new AbortController();
+    chatsController.current = controller;
+    const isCurrent = () => mounted.current && request === chatsRequest.current && localStorage.getItem("akhflow.token") === token;
+    setChatsLoading(true);
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/chats`;
+      const data: ChatSession[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+      if (!isCurrent()) return;
+      setChats(data);
+      setChatsLoaded(true);
+      setChatsError(false);
+      setActiveChat((prev) => {
+        if (prev && data.some((c) => c.id === prev)) return prev;
+        return data.length > 0 ? data[0].id : null;
+      });
+    } catch {
+      if (isCurrent() && !controller.signal.aborted) setChatsError(true);
+    } finally {
+      if (isCurrent()) setChatsLoading(false);
+    }
   }, [token, project, workspaceApi]);
 
   const loadMessages = useCallback(
@@ -2187,7 +2210,13 @@ function ProjectWorkspace({
                 <Button size="sm" variant="outline" onClick={newChat}><Plus /></Button>
               </CardHeader>
               <CardContent className="space-y-1 p-3">
-                {chats.length === 0 && <p className="text-sm text-muted-foreground">Нет чатов</p>}
+                {chatsError && (
+                  <div role="alert" className="space-y-2 text-sm text-destructive">
+                    <p>Не удалось загрузить чаты.</p>
+                    <Button size="sm" variant="outline" disabled={chatsLoading} onClick={() => void loadChats()}>Повторить</Button>
+                  </div>
+                )}
+                {chatsLoaded && !chatsError && chats.length === 0 && <p className="text-sm text-muted-foreground">Нет чатов</p>}
                 {chats.map((c) => (
                   <button
                     key={c.id}
