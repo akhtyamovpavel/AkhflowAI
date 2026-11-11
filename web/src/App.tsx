@@ -526,6 +526,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [newDep, setNewDep] = useState("");
   const [dependencyAddResults, setDependencyAddResults] = useState<Record<string, { message: string; checked?: boolean }>>({});
   const dependencySelectionRevision = useRef(0);
+  const dependencyMutationRevision = useRef(0);
   const dependencyAddsPending = useRef(new Set<string>());
   const [pendingDependencyCount, setPendingDependencyCount] = useState(0);
   const dependencyRefreshPending = useRef(false);
@@ -774,6 +775,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     const selected = newDep;
     if (!selected || dependencyAddsPending.current.has(selected) || dependencyRefreshPending.current) return;
     const revision = dependencySelectionRevision.current;
+    dependencyMutationRevision.current++;
     dependencyAddsPending.current.add(selected);
     setPendingDependencyCount(dependencyAddsPending.current.size);
     clearDependencyAddResult(selected);
@@ -805,13 +807,22 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const refreshDependencyRemoval = async (target: DependencyRemoval) => {
-    const results = await Promise.allSettled([load(), Promise.resolve().then(onChanged)]);
+    const mutationRevision = dependencyMutationRevision.current;
+    const additionsWerePending = dependencyAddsPending.current.size > 0;
+    const detailLoad = load();
+    const requestVersion = detailRequest.current;
+    const results = await Promise.allSettled([detailLoad, Promise.resolve().then(onChanged)]);
     const detail = results[0];
     if (detail.status === "rejected" || !detail.value || results[1].status === "rejected") {
       const message = target.confirmed
         ? "Связь удалена, но обновить данные не удалось. Повтори проверку."
         : "Не удалось обновить данные о связях. Проверь связи перед повторным удалением.";
       setDependencyError(message);
+      return;
+    }
+    const changed = requestVersion !== detailRequest.current || mutationRevision !== dependencyMutationRevision.current;
+    if (changed || additionsWerePending || dependencyAddsPending.current.size > 0) {
+      setDependencyError("Данные карточки изменились во время проверки. Повтори проверку удаления связи.");
       return;
     }
     const data = detail.value;
@@ -841,6 +852,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const removeDep = async (sourceId: number, depId: number) => {
     if (dependencyRemovalPending.current || dependencyRemoval) return;
     const target = { sourceId, depId, confirmed: false };
+    dependencyMutationRevision.current++;
     dependencyRemovalPending.current = true;
     setDependencyRemoval(target);
     setDependencyRemovalStatus("");
