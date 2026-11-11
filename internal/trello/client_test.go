@@ -163,3 +163,91 @@ func TestFetchBoardRejectsInvalidIDAndRedactsErrors(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestFetchBoardRejectsNullCollections(t *testing.T) {
+	cases := []struct {
+		name      string
+		lists     string
+		cards     string
+		wantError bool
+	}{
+		{name: "null lists", lists: "null", cards: "[]", wantError: true},
+		{name: "null cards", lists: "[]", cards: "null", wantError: true},
+		{name: "empty arrays", lists: "[]", cards: "[]"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/boards/short123":
+					fmt.Fprint(w, `{"id":"board123"}`)
+				case "/boards/board123/lists":
+					fmt.Fprint(w, test.lists)
+				case "/boards/board123/cards":
+					fmt.Fprint(w, test.cards)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			client := New("example-key", "example-token")
+			client.BaseURL = server.URL
+			board, err := client.FetchBoard(context.Background(), "short123")
+			if test.wantError {
+				if err == nil || board != nil || !strings.Contains(err.Error(), "некорректный ответ") {
+					t.Fatalf("expected invalid response, board=%+v error=%v", board, err)
+				}
+				return
+			}
+			if err != nil || board == nil || len(board.Lists) != 0 || len(board.Cards) != 0 {
+				t.Fatalf("empty board: %+v %v", board, err)
+			}
+		})
+	}
+}
+
+func TestFetchCardsRejectsNullAfterFullPage(t *testing.T) {
+	page := make([]Card, cardPageSize)
+	for index := range page {
+		page[index] = Card{ID: fmt.Sprintf("%08x%016x", 2_000_000-index, len(page)-index), ListID: "list1", Name: "Card"}
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		fmt.Fprint(w, "null")
+	}))
+	defer server.Close()
+	client := New("example-key", "example-token")
+	client.BaseURL = server.URL
+	cards, err := client.fetchCards(context.Background(), "/boards/board123")
+	if err == nil || cards != nil || requests != 2 || !strings.Contains(err.Error(), "некорректный ответ") {
+		t.Fatalf("null second page: cards=%d requests=%d error=%v", len(cards), requests, err)
+	}
+}
+
+func TestFetchCardsAcceptsEmptyAfterFullPage(t *testing.T) {
+	page := make([]Card, cardPageSize)
+	for index := range page {
+		page[index] = Card{ID: fmt.Sprintf("%08x%016x", 2_000_000-index, len(page)-index), ListID: "list1", Name: "Card"}
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		fmt.Fprint(w, "[]")
+	}))
+	defer server.Close()
+	client := New("example-key", "example-token")
+	client.BaseURL = server.URL
+	cards, err := client.fetchCards(context.Background(), "/boards/board123")
+	if err != nil || len(cards) != cardPageSize || requests != 2 {
+		t.Fatalf("empty second page: cards=%d requests=%d error=%v", len(cards), requests, err)
+	}
+}

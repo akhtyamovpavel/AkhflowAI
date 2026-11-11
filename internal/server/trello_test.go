@@ -98,6 +98,25 @@ func TestTrelloImportHTTP(t *testing.T) {
 	largeCards[999]["name"] = "Archived list card"
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/1/boards/nulllist", "/1/boards/nullcard", "/1/boards/nullpage", "/1/boards/empty123":
+			id := strings.TrimPrefix(r.URL.Path, "/1/boards/")
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+		case "/1/boards/nulllist/lists":
+			fmt.Fprint(w, `null`)
+		case "/1/boards/nulllist/cards":
+			fmt.Fprint(w, `[{"id":"card1","idList":"list1","name":"Example"}]`)
+		case "/1/boards/nullcard/lists", "/1/boards/nullpage/lists":
+			fmt.Fprint(w, `[{"id":"list2","name":"List"}]`)
+		case "/1/boards/empty123/lists", "/1/boards/empty123/cards":
+			fmt.Fprint(w, `[]`)
+		case "/1/boards/nullcard/cards":
+			fmt.Fprint(w, `null`)
+		case "/1/boards/nullpage/cards":
+			if r.URL.Query().Get("before") == "" {
+				_ = json.NewEncoder(w).Encode(largeCards[:1000])
+			} else {
+				fmt.Fprint(w, `null`)
+			}
 		case "/1/boards/short123":
 			fmt.Fprint(w, `{"id":"board123"}`)
 		case "/1/boards/board123/lists":
@@ -155,6 +174,28 @@ func TestTrelloImportHTTP(t *testing.T) {
 	}
 	if response := request(otherToken, "short123"); response.Code != http.StatusForbidden {
 		t.Fatalf("non-authorized member received %d", response.Code)
+	}
+	for _, boardID := range []string{"nulllist", "nullcard", "nullpage"} {
+		response := request(ownerToken, boardID)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "некорректный ответ") {
+			t.Fatalf("invalid %s: %d %s", boardID, response.Code, response.Body.String())
+		}
+		tasks, err := st.ListTasks(ctx, projectID, "")
+		if err != nil || len(tasks) != 0 {
+			t.Fatalf("invalid %s created tasks: %d %v", boardID, len(tasks), err)
+		}
+		epics, err := st.EpicsOfProject(ctx, projectID)
+		if err != nil || len(epics) != 0 {
+			t.Fatalf("invalid %s created epics: %d %v", boardID, len(epics), err)
+		}
+		var mappings int
+		query := "SELECT (SELECT count(*) FROM " + schema + ".trello_import_lists) + (SELECT count(*) FROM " + schema + ".trello_import_cards)"
+		if err := admin.QueryRow(ctx, query).Scan(&mappings); err != nil || mappings != 0 {
+			t.Fatalf("invalid %s created mappings: %d %v", boardID, mappings, err)
+		}
+	}
+	if response := request(ownerToken, "empty123"); response.Code != http.StatusOK {
+		t.Fatalf("empty arrays: %d %s", response.Code, response.Body.String())
 	}
 	first := request(ownerToken, "short123")
 	if first.Code != http.StatusOK {

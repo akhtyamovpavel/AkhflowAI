@@ -79,6 +79,9 @@ func (c *Client) FetchBoard(ctx context.Context, boardID string) (*Board, error)
 	if err := c.get(ctx, base+"/lists?filter=open&fields=id,name", &board.Lists); err != nil {
 		return nil, err
 	}
+	if board.Lists == nil {
+		return nil, errors.New("Trello вернул некорректный ответ со списками")
+	}
 	cards, err := c.fetchCards(ctx, base)
 	if err != nil {
 		return nil, err
@@ -102,6 +105,9 @@ func (c *Client) fetchCards(ctx context.Context, base string) ([]Card, error) {
 		var page []Card
 		if err := c.get(ctx, base+"/cards?"+query.Encode(), &page); err != nil {
 			return nil, err
+		}
+		if page == nil {
+			return nil, errors.New("Trello вернул некорректный ответ с карточками")
 		}
 		if len(page) > cardPageSize {
 			return nil, errors.New("Trello вернул слишком много карточек на странице")
