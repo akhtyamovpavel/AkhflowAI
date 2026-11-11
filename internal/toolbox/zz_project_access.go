@@ -157,6 +157,9 @@ func authorizeToolProject(ctx context.Context, deps Deps, args json.RawMessage, 
 	if projectID == 0 {
 		return nil, errors.New("project or task not found")
 	}
+	if deps.ProjectID != 0 && deps.ProjectID != projectID {
+		return nil, errors.New("access denied")
+	}
 	role, err := deps.Store.ProjectRole(ctx, projectID, deps.ActorID)
 	if err != nil {
 		return nil, err

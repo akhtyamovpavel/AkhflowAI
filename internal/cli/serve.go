@@ -82,6 +82,16 @@ func runAPI() error {
 		log.Print("event listener unavailable; retrying")
 	}
 	srv := server.New(st, auth, llmClient, bus)
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		srv.RunAgentWorker(workerCtx)
+	}()
+	defer func() {
+		stopWorker()
+		<-workerDone
+	}()
 	emailConfig, emailEnabled, err := email.FromEnv()
 	if err != nil {
 		return fmt.Errorf("email configuration: %w", err)
