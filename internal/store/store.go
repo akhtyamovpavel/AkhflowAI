@@ -492,30 +492,80 @@ func (s *Store) ListComments(ctx context.Context, taskID int64) ([]domain.Commen
 
 // ---------- dependencies ----------
 
+var ErrDependencyCycle = errors.New("dependency would create a cycle")
+var ErrDependencyDifferentProject = errors.New("dependency must be in the same project")
+
+// AddDependency serializes graph changes per project across all API and MCP processes.
 func (s *Store) AddDependency(ctx context.Context, taskID, dependsOn int64) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO task_dependencies(task_id, depends_on) VALUES($1,$2) ON CONFLICT DO NOTHING`, taskID, dependsOn)
-	return err
+	if taskID == dependsOn {
+		return ErrDependencyCycle
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var projectID int64
+	err = tx.QueryRow(ctx, `SELECT project_id FROM tasks WHERE id=$1`, taskID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	// NO KEY UPDATE conflicts with other dependency insertions but not with
+	// ordinary foreign-key checks on the project row.
+	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE id=$1 FOR NO KEY UPDATE`, projectID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var sourceProject, targetProject int64
+	err = tx.QueryRow(ctx, `SELECT source.project_id, target.project_id FROM tasks source JOIN tasks target ON target.id=$2 WHERE source.id=$1`, taskID, dependsOn).Scan(&sourceProject, &targetProject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if sourceProject != projectID || targetProject != projectID {
+		return ErrDependencyDifferentProject
+	}
+	var existing bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM task_dependencies WHERE task_id=$1 AND depends_on=$2)`, taskID, dependsOn).Scan(&existing)
+	if err != nil {
+		return err
+	}
+	if existing {
+		return tx.Commit(ctx)
+	}
+	var cycle bool
+	err = tx.QueryRow(ctx, `
+		WITH RECURSIVE reachable AS (
+			SELECT depends_on FROM task_dependencies WHERE task_id = $2
+			UNION
+			SELECT td.depends_on FROM task_dependencies td
+			JOIN reachable r ON td.task_id = r.depends_on
+		)
+		SELECT EXISTS(SELECT 1 FROM reachable WHERE depends_on = $1)`, taskID, dependsOn).Scan(&cycle)
+	if err != nil {
+		return err
+	}
+	if cycle {
+		return ErrDependencyCycle
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO task_dependencies(task_id, depends_on) VALUES($1,$2) ON CONFLICT DO NOTHING`, taskID, dependsOn)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) RemoveDependency(ctx context.Context, taskID, dependsOn int64) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM task_dependencies WHERE task_id=$1 AND depends_on=$2`, taskID, dependsOn)
 	return err
-}
-
-func (s *Store) WouldCreateCycle(ctx context.Context, taskID, dependsOn int64) (bool, error) {
-	if taskID == dependsOn {
-		return true, nil
-	}
-	var cycle bool
-	err := s.db.QueryRow(ctx, `
-		WITH RECURSIVE reachable AS (
-			SELECT depends_on FROM task_dependencies WHERE task_id = $1
-			UNION
-			SELECT td.depends_on FROM task_dependencies td
-			JOIN reachable r ON td.task_id = r.depends_on
-		)
-		SELECT EXISTS(SELECT 1 FROM reachable WHERE depends_on = $2)`, taskID, dependsOn).Scan(&cycle)
-	return cycle, err
 }
 
 // UnfinishedDependencies returns the tasks that taskID depends on which are not done yet.

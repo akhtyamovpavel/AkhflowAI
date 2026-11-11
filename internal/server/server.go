@@ -808,16 +808,19 @@ func (s *Server) addDependency(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dependency must be in the same project"})
 		return
 	}
-	cycle, err := s.Store.WouldCreateCycle(r.Context(), id, depID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if cycle {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "dependency would create a cycle"})
-		return
-	}
 	if err := s.Store.AddDependency(r.Context(), id, depID); err != nil {
+		if errors.Is(err, store.ErrDependencyCycle) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, store.ErrDependencyDifferentProject) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

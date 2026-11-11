@@ -73,6 +73,7 @@ jobs:
       - run: node ../scripts/test_description_error_ui.mjs
       - run: node ../scripts/test_comment_submit_ui.mjs
       - run: node ../scripts/test_attachment_refresh_ui.mjs
+      - run: node ../scripts/test_dependency_selection_ui.mjs
 
   compose:
     runs-on: ubuntu-latest
