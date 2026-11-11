@@ -69,6 +69,9 @@ try {
         await route.fulfill({ status: 503, json: { error: "unavailable" } }).catch(() => {});
         return;
       }
+      if (mode === "success") {
+        await delay(500);
+      }
       const chatId = Number(path.split("/")[3]);
       data = { id: 1, chat_id: chatId, request_key: request.headers()["idempotency-key"], status: "queued" };
       await route.fulfill({ status: 202, json: data }).catch(() => {});
@@ -89,6 +92,17 @@ try {
     }
     assert.ok(projectLoads.filter((value) => value === account).length > previous);
   };
+  const waitForPost = async (pending) => {
+    let timer;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("POST did not start within 5 seconds")), 5000);
+      });
+      await Promise.race([pending, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   await page.goto(url, { timeout: 20000 });
   await page.getByRole("button", { name: "Агент", exact: true }).click();
@@ -105,7 +119,7 @@ try {
   await first.click();
   assert.equal(await input.inputValue(), "Черновик первого");
   await input.press("Enter");
-  await waitingForPost;
+  await waitForPost(waitingForPost);
   assert.equal(await input.inputValue(), "", "submitted text remained ready to resend");
   await input.fill("Новый текст после ошибки");
   releasePost();
@@ -117,7 +131,14 @@ try {
   assert.equal(posts.length, 1, "uncertain send must block the next POST");
   await page.getByRole("button", { name: "Проверить запуск" }).click();
   mode = "success";
-  await page.getByRole("button", { name: "Повторить проверенную отправку" }).click();
+  const retryResponse = page.waitForResponse((result) => {
+    return new URL(result.url()).pathname === "/api/chats/1/runs" && result.request().method() === "POST" && result.status() === 202;
+  });
+  await Promise.all([retryResponse, page.getByRole("button", { name: "Повторить проверенную отправку" }).click()]);
+  await page.waitForFunction(() => {
+    const field = document.querySelector('input[placeholder="Скажи агенту, что сделать..."]');
+    return field?.parentElement?.querySelector("button")?.disabled === false;
+  });
   await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor({ state: "hidden" });
   assert.equal(await input.inputValue(), "Новый текст после ошибки", "acknowledgement erased newer input");
 
@@ -125,7 +146,7 @@ try {
   waitingForPost = new Promise((resolve) => { postStarted = resolve; });
   pendingPost = new Promise((resolve) => { releasePost = resolve; });
   await input.press("Enter");
-  await waitingForPost;
+  await waitForPost(waitingForPost);
   await input.fill("Новый текст после отправки");
   await second.click();
   assert.equal(await input.inputValue(), "Черновик второго");
