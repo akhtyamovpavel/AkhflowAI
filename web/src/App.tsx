@@ -554,20 +554,42 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [removingDependency, setRemovingDependency] = useState(false);
   const dependencyRemovalPending = useRef(false);
   const detailRequest = useRef(0);
+  const detailController = useRef<AbortController | null>(null);
+  const initialLoadPending = useRef(false);
+  const taskLoaded = useRef(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
     const requestVersion = ++detailRequest.current;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    if (!taskLoaded.current) {
+      initialLoadPending.current = true;
+      setInitialLoading(true);
+      setInitialError(false);
+    }
     const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
     let data;
     try {
-      data = await request(`/api/tasks/${taskId}`, {}, token);
+      data = await request(`/api/tasks/${taskId}`, { signal: controller.signal }, token);
     } catch (error) {
       if (requestVersion !== detailRequest.current) return;
+      if (!taskLoaded.current) {
+        setInitialError(true);
+      }
       throw error;
+    } finally {
+      if (requestVersion === detailRequest.current) {
+        initialLoadPending.current = false;
+        setInitialLoading(false);
+      }
     }
     if (requestVersion !== detailRequest.current) return;
+    taskLoaded.current = true;
     setTask(data.task);
     if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
       titleDraft.current.value = data.task.title;
@@ -587,9 +609,23 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     return data;
   }, [taskId, token, request]);
 
-  useEffect(() => {
-    load();
+  const loadInitial = useCallback(async () => {
+    if (initialLoadPending.current) return;
+    try {
+      await load();
+    } catch {
+      // The load handler exposes an error for the current request.
+    }
   }, [load]);
+
+  useEffect(() => {
+    void loadInitial();
+    return () => {
+      detailRequest.current++;
+      detailController.current?.abort();
+      initialLoadPending.current = false;
+    };
+  }, [loadInitial]);
 
   useEffect(() => {
     const update = (refresh: boolean) => {
@@ -617,7 +653,35 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   }, [deps, newDep]);
 
-  if (!task) return null;
+  if (!task) {
+    return (
+      <div className="fixed inset-0 z-50" onClick={onClose}>
+        <div className="absolute inset-0 bg-black/30" />
+        <div
+          className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto border-l bg-background shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b p-4">
+            <span className="text-sm text-muted-foreground">Задача #{taskId}</span>
+            <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+              <X />
+            </Button>
+          </div>
+          <div className="space-y-3 p-4">
+            {initialLoading && <p role="status">Загружаем карточку задачи...</p>}
+            {initialError && (
+              <div role="alert" className="space-y-2 text-sm text-destructive">
+                <p>Не удалось загрузить карточку задачи. Попробуй ещё раз.</p>
+                <Button size="sm" variant="outline" disabled={initialLoading} onClick={() => void loadInitial()}>
+                  Повторить загрузку
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const patch = async (body: unknown) => {
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
@@ -1324,12 +1388,16 @@ function ProjectWorkspace({
   const mounted = useRef(false);
   const taskRequest = useRef(0);
   const taskController = useRef<AbortController | null>(null);
+  const chatsRequest = useRef(0);
+  const chatsController = useRef<AbortController | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       taskRequest.current++;
       taskController.current?.abort();
+      chatsRequest.current++;
+      chatsController.current?.abort();
     };
   }, []);
   const workspaceApi = useCallback<ApiRequest>((path, options, requestToken) => {
@@ -1343,6 +1411,9 @@ function ProjectWorkspace({
   const [tasksError, setTasksError] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [chats, setChats] = useState<ChatSession[]>([]);
+  const [chatsError, setChatsError] = useState(false);
+  const [chatsLoading, setChatsLoading] = useState(false);
+  const [chatsLoaded, setChatsLoaded] = useState(false);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
   const [messageErrors, setMessageErrors] = useState<Record<number, boolean>>({});
@@ -1443,13 +1514,29 @@ function ProjectWorkspace({
   }, [token, project, workspaceApi]);
 
   const loadChats = useCallback(async () => {
-    if (!token || !project) return;
-    const data: ChatSession[] = (await workspaceApi(`/api/projects/${project}/chats`, {}, token)) ?? [];
-    setChats(data);
-    setActiveChat((prev) => {
-      if (prev && data.some((c) => c.id === prev)) return prev;
-      return data.length > 0 ? data[0].id : null;
-    });
+    if (!mounted.current || !token || !project) return;
+    const request = ++chatsRequest.current;
+    chatsController.current?.abort();
+    const controller = new AbortController();
+    chatsController.current = controller;
+    const isCurrent = () => mounted.current && request === chatsRequest.current && localStorage.getItem("akhflow.token") === token;
+    setChatsLoading(true);
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/chats`;
+      const data: ChatSession[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+      if (!isCurrent()) return;
+      setChats(data);
+      setChatsLoaded(true);
+      setChatsError(false);
+      setActiveChat((prev) => {
+        if (prev && data.some((c) => c.id === prev)) return prev;
+        return data.length > 0 ? data[0].id : null;
+      });
+    } catch {
+      if (isCurrent() && !controller.signal.aborted) setChatsError(true);
+    } finally {
+      if (isCurrent()) setChatsLoading(false);
+    }
   }, [token, project, workspaceApi]);
 
   const loadMessages = useCallback(
@@ -2151,7 +2238,13 @@ function ProjectWorkspace({
                 <Button size="sm" variant="outline" onClick={newChat}><Plus /></Button>
               </CardHeader>
               <CardContent className="space-y-1 p-3">
-                {chats.length === 0 && <p className="text-sm text-muted-foreground">Нет чатов</p>}
+                {chatsError && (
+                  <div role="alert" className="space-y-2 text-sm text-destructive">
+                    <p>Не удалось загрузить чаты.</p>
+                    <Button size="sm" variant="outline" disabled={chatsLoading} onClick={() => void loadChats()}>Повторить</Button>
+                  </div>
+                )}
+                {chatsLoaded && !chatsError && chats.length === 0 && <p className="text-sm text-muted-foreground">Нет чатов</p>}
                 {chats.map((c) => (
                   <button
                     key={c.id}
