@@ -69,7 +69,7 @@ try {
         await route.fulfill({ status: 503, json: { error: "unavailable" } }).catch(() => {});
         return;
       }
-      data = { reply: "Ответ агента" };
+      data = { reply: "Ответ агента", tool_calls: null, iterations: 1 };
     }
     await route.fulfill({ json: data }).catch(() => {});
   });
@@ -106,10 +106,15 @@ try {
   assert.equal(await input.inputValue(), "", "submitted text remained ready to resend");
   await input.fill("Новый текст после ошибки");
   releasePost();
-  await page.getByText("Ошибка:", { exact: false }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
   assert.equal(await input.inputValue(), "Новый текст после ошибки", "failed send erased newer input");
-  await page.getByText("Черновик первого", { exact: true }).waitFor();
+  await page.getByText("Черновик первого", { exact: true }).first().waitFor();
   assert.equal(posts[0].path, "/api/chats/1/messages");
+  await input.press("Enter");
+  assert.equal(posts.length, 1, "uncertain send must block the next POST");
+  await page.getByRole("button", { name: "Проверить историю" }).click();
+  await page.getByRole("button", { name: "Я проверил историю и понимаю, что действие может продолжаться" }).click();
+  assert.equal(await input.inputValue(), "Новый текст после ошибки", "acknowledgement erased newer input");
 
   mode = "hold";
   waitingForPost = new Promise((resolve) => { postStarted = resolve; });
@@ -129,7 +134,7 @@ try {
   await input.press("Enter");
   assert.equal(posts.length, 2, "pending send was repeated after a project switch");
   releasePost();
-  await page.getByText("Попробуй:", { exact: false }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
   assert.equal(await input.inputValue(), "Новый текст после отправки", "late success erased a newer draft");
 
   await page.locator("header select").first().selectOption("beta");
