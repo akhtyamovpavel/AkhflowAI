@@ -518,7 +518,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [sendingComment, setSendingComment] = useState(commentDraft.pending);
   const [commentError, setCommentError] = useState(commentDraft.error);
   const [newDep, setNewDep] = useState("");
-  const [addDependencyError, setAddDependencyError] = useState("");
+  const [dependencyAddResults, setDependencyAddResults] = useState<Record<string, { message: string; checked?: boolean }>>({});
   const dependencySelectionRevision = useRef(0);
   const dependencyAddsPending = useRef(new Set<string>());
   const [pendingDependencyCount, setPendingDependencyCount] = useState(0);
@@ -558,6 +558,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       draft.saved = value;
       setDesc(value);
     }
+    return data;
   }, [taskId, token, request]);
 
   useEffect(() => {
@@ -722,16 +723,33 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   };
 
-  const refreshDependencyChoices = async () => {
+  const setDependencyAddResult = (id: string, message: string, checked = false) => {
+    setDependencyAddResults((results) => ({ ...results, [id]: { message, checked } }));
+  };
+
+  const clearDependencyAddResult = (id: string) => {
+    setDependencyAddResults((results) => {
+      const next = { ...results };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const refreshDependencyChoices = async (selected: string) => {
     if (dependencyAddsPending.current.size || dependencyRefreshPending.current) return;
     dependencyRefreshPending.current = true;
     setRefreshingDependencies(true);
     try {
-      await load();
+      const data = await load();
+      if (!data) {
+        throw new Error("dependency refresh superseded");
+      }
       await onChanged();
-      setAddDependencyError("");
+      const found = (data.dependencies ?? []).some((dependency: Task) => dependency.id === Number(selected));
+      const message = found ? "Проверка завершена: зависимость добавлена." : "Проверка завершена: зависимость отсутствует. Можно повторить добавление.";
+      setDependencyAddResult(selected, message, true);
     } catch {
-      setAddDependencyError("Не удалось обновить данные о связях. Попробуй ещё раз.");
+      setDependencyAddResult(selected, "Не удалось обновить данные о связи. Попробуй ещё раз.");
     } finally {
       dependencyRefreshPending.current = false;
       setRefreshingDependencies(false);
@@ -749,7 +767,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     const revision = dependencySelectionRevision.current;
     dependencyAddsPending.current.add(selected);
     setPendingDependencyCount(dependencyAddsPending.current.size);
-    setAddDependencyError("");
+    clearDependencyAddResult(selected);
     try {
       await request(`/api/tasks/${taskId}/dependencies`, {
         method: "POST",
@@ -758,9 +776,9 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     } catch (error) {
       const conflict = error instanceof Error && error.message.startsWith("409:");
       const message = conflict
-        ? "Не удалось добавить зависимость: связь создаёт цикл. Выбор сохранён. Выбери другую задачу или повтори после изменения связей."
-        : "Не удалось подтвердить добавление зависимости. Выбор сохранён. Обнови связи перед повторной отправкой.";
-      setAddDependencyError(message);
+        ? "Не удалось добавить зависимость: связь создаёт цикл. Выбери другую задачу или повтори после изменения связей."
+        : "Не удалось подтвердить добавление зависимости. Обнови связи перед повторной отправкой.";
+      setDependencyAddResult(selected, message);
       finishDependencyAdd(selected);
       return;
     }
@@ -771,7 +789,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
       await load();
       await onChanged();
     } catch {
-      setAddDependencyError("Зависимость добавлена, но обновить данные не удалось. Обнови связи.");
+      setDependencyAddResult(selected, "Зависимость добавлена, но обновить данные не удалось. Обнови связь.");
     } finally {
       finishDependencyAdd(selected);
     }
@@ -959,12 +977,12 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>
             {dependencyError && <p role="alert" className="text-sm text-destructive">{dependencyError}</p>}
-            {addDependencyError && (
-              <div role="alert" className="text-sm text-destructive">
-                {addDependencyError}
-                <Button size="sm" variant="ghost" disabled={addingDependency} onClick={() => void refreshDependencyChoices()}>Обновить связи</Button>
+            {Object.entries(dependencyAddResults).map(([id, result]) => (
+              <div key={id} role={result.checked ? "status" : "alert"} className="text-sm">
+                <p>Зависимость #{id}: {result.message}</p>
+                {!result.checked && <Button size="sm" variant="ghost" disabled={addingDependency} onClick={() => void refreshDependencyChoices(id)}>Проверить связь #{id}</Button>}
               </div>
-            )}
+            ))}
             {addingDependency && <p role="status" className="text-sm text-muted-foreground">Обновляем зависимости...</p>}
             <div className="space-y-1">
               {deps.length === 0 && <p className="text-sm text-muted-foreground">Пока пусто</p>}
@@ -979,7 +997,6 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
                   onChange={(e) => {
                     dependencySelectionRevision.current++;
                     setNewDep(e.target.value);
-                    setAddDependencyError("");
                   }}
                 >
                   <option value="">Выберите задачу...</option>
