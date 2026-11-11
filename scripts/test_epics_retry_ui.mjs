@@ -17,6 +17,7 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
   stdio: "ignore",
 });
 let browser;
+let tasksFail = true;
 
 try {
   let ready = false;
@@ -93,6 +94,14 @@ try {
       await route.fulfill({ json: { id: 1, title: "Created epic" } });
       return;
     }
+    if (path.endsWith("/tasks") && route.request().method() === "GET") {
+      if (tasksFail) {
+        await route.fulfill({ status: 503, json: { error: "unavailable" } });
+      } else {
+        await route.fulfill({ json: [] });
+      }
+      return;
+    }
     if (path.endsWith("/role")) {
       await route.fulfill({ json: { role: "owner" } });
       return;
@@ -101,16 +110,26 @@ try {
   });
   await page.goto(url);
   const error = page.getByRole("alert").filter({ hasText: "Не удалось загрузить эпики" });
+  const tasksError = page.getByRole("alert").filter({ hasText: "Не удалось загрузить задачи" });
   const retry = page.getByRole("button", { name: "Повторить загрузку эпиков" });
+  const tasksRetry = page.getByRole("button", { name: "Повторить загрузку задач" });
   const epicSelect = page.locator("header select").nth(1);
   await error.waitFor();
+  await tasksError.waitFor();
   await page.waitForFunction(() => window.streams.some((stream) => !stream.signal.aborted));
+  tasksFail = false;
+  await tasksRetry.click();
+  await tasksError.waitFor({ state: "detached" });
+  assert.equal(await error.count(), 1, "task retry must not clear the epic error");
   await page.evaluate(() => { window.epicMode = "hold"; });
   await retry.click();
   await page.waitForFunction(() => window.epicRequests.some((request) => request.release && !request.signal.aborted));
   assert.equal(await retry.isDisabled(), true, "retry must be disabled while loading");
   await page.evaluate(() => window.epicRequests.findLast((request) => request.release && !request.signal.aborted).release(503));
-  await page.waitForFunction(() => !document.querySelector('[role="alert"] button')?.disabled);
+  await page.waitForFunction(() => {
+    const button = [...document.querySelectorAll("button")].find((item) => item.textContent?.includes("Повторить загрузку эпиков"));
+    return button && !button.disabled;
+  });
   await page.evaluate(() => { window.epicMode = "success"; });
   await retry.click();
   await epicSelect.locator("option", { hasText: "Alpha epic" }).waitFor({ state: "attached" });

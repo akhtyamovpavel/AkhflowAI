@@ -67,6 +67,7 @@ jobs:
       - run: node ../scripts/test_stale_auth_ui.mjs
       - run: node ../scripts/test_projects_retry_ui.mjs
       - run: node ../scripts/test_epics_retry_ui.mjs
+      - run: node ../scripts/test_tasks_retry_ui.mjs
       - run: node ../scripts/test_stale_forbidden_ui.mjs
       - run: node ../scripts/test_login_session_ui.mjs
       - run: node ../scripts/test_registration_submit_ui.mjs

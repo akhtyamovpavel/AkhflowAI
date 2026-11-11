@@ -1322,10 +1322,14 @@ function ProjectWorkspace({
 }) {
   const [accessError, setAccessError] = useState(false);
   const mounted = useRef(false);
+  const taskRequest = useRef(0);
+  const taskController = useRef<AbortController | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      taskRequest.current++;
+      taskController.current?.abort();
     };
   }, []);
   const workspaceApi = useCallback<ApiRequest>((path, options, requestToken) => {
@@ -1336,6 +1340,8 @@ function ProjectWorkspace({
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksProject, setTasksProject] = useState("");
+  const [tasksError, setTasksError] = useState(false);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
@@ -1373,7 +1379,6 @@ function ProjectWorkspace({
   const [bulkMessage, setBulkMessage] = useState("");
   const [eventNotice, setEventNotice] = useState<{ text: string; taskId: number | null } | null>(null);
   const newTaskInput = useRef<HTMLInputElement>(null);
-  const taskRequest = useRef(0);
   const projectId = projects.find((item) => item.slug === project)?.id;
 
   useEffect(() => {
@@ -1390,12 +1395,29 @@ function ProjectWorkspace({
   }, [token, project, openTaskId, showNewProject, showNewEpic, showTrelloImport, showBitrixImport]);
 
   const loadTasks = useCallback(async () => {
-    if (!token || !project) return;
+    if (!mounted.current || !token || !project) return;
     const request = ++taskRequest.current;
-    const data: Task[] = (await workspaceApi(`/api/projects/${project}/tasks`, {}, token)) ?? [];
-    if (!mounted.current || request !== taskRequest.current) return;
-    setTasks(data);
-    setTasksProject(project);
+    taskController.current?.abort();
+    const controller = new AbortController();
+    taskController.current = controller;
+    setTasksLoading(true);
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/tasks`;
+      const data: Task[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+      if (!mounted.current || request !== taskRequest.current) return;
+      setTasks(data);
+      setTasksProject(project);
+      setTasksError(false);
+      setCreateRefreshError("");
+    } catch (error) {
+      if (!mounted.current || request !== taskRequest.current || controller.signal.aborted) return;
+      setTasksError(true);
+      throw error;
+    } finally {
+      if (mounted.current && request === taskRequest.current) {
+        setTasksLoading(false);
+      }
+    }
   }, [token, project, workspaceApi]);
 
   const fetchDeadlineTasks = useCallback(async (signal: AbortSignal): Promise<Task[]> => {
@@ -1519,21 +1541,10 @@ function ProjectWorkspace({
       refreshing = true;
       while (refreshPending && !controller.signal.aborted) {
         refreshPending = false;
-        const request = ++taskRequest.current;
         try {
-          const path = `/api/projects/${encodeURIComponent(project)}/tasks`;
-          const response = await fetch(API + path, {
-            headers: { Authorization: `Bearer ${token}` },
-            signal: controller.signal,
-          });
-          if (!response.ok) throw new Error("Task refresh failed");
-          const data: Task[] = await response.json();
-          if (!controller.signal.aborted && request === taskRequest.current) {
-            setTasks(data ?? []);
-            setTasksProject(project);
-          }
+          await loadTasks();
         } catch {
-          // A later event or reconnection retries the refresh.
+          // The task-list error offers a retry until the next event or reconnection.
         }
       }
       refreshing = false;
@@ -1571,7 +1582,7 @@ function ProjectWorkspace({
       unsubscribe();
       window.clearTimeout(noticeTimer);
     };
-  }, [project, projectId, token, loadEpics]);
+  }, [loadTasks, loadEpics, project, projectId, token]);
 
   useEffect(() => {
     if (!sharedTask || sharedTask.project !== project || tasksProject !== project) return;
@@ -1986,6 +1997,14 @@ function ProjectWorkspace({
             <Button size="sm" variant="ghost" onClick={() => {
               void loadTasks().then(() => setCreateRefreshError("")).catch(() => {});
             }}>Обновить список</Button>
+          </div>
+        )}
+        {tasksError && (
+          <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+            <span>Не удалось загрузить задачи. Попробуй ещё раз.</span>
+            <Button size="sm" variant="outline" disabled={tasksLoading} onClick={() => void loadTasks().catch(() => {})}>
+              Повторить загрузку задач
+            </Button>
           </div>
         )}
         <p className="text-sm text-muted-foreground">Alt+N: перейти к созданию задачи.</p>
