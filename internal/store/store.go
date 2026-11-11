@@ -385,8 +385,17 @@ func (s *Store) scanTask(row pgx.Row) (*domain.Task, error) {
 	return &t, nil
 }
 
+type taskHydrator interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 func (s *Store) hydrateTask(ctx context.Context, t *domain.Task) error {
-	rows, err := s.db.Query(ctx, `SELECT label FROM task_labels WHERE task_id=$1 ORDER BY label`, t.ID)
+	return hydrateTask(ctx, s.db, t)
+}
+
+func hydrateTask(ctx context.Context, db taskHydrator, t *domain.Task) error {
+	rows, err := db.Query(ctx, `SELECT label FROM task_labels WHERE task_id=$1 ORDER BY label`, t.ID)
 	if err != nil {
 		return err
 	}
@@ -404,7 +413,7 @@ func (s *Store) hydrateTask(ctx context.Context, t *domain.Task) error {
 		return err
 	}
 
-	rows, err = s.db.Query(ctx, `SELECT depends_on FROM task_dependencies WHERE task_id=$1 ORDER BY depends_on`, t.ID)
+	rows, err = db.Query(ctx, `SELECT depends_on FROM task_dependencies WHERE task_id=$1 ORDER BY depends_on`, t.ID)
 	if err != nil {
 		return err
 	}
@@ -422,7 +431,7 @@ func (s *Store) hydrateTask(ctx context.Context, t *domain.Task) error {
 		return err
 	}
 
-	rows, err = s.db.Query(ctx, `SELECT task_id FROM task_dependencies WHERE depends_on=$1 ORDER BY task_id`, t.ID)
+	rows, err = db.Query(ctx, `SELECT task_id FROM task_dependencies WHERE depends_on=$1 ORDER BY task_id`, t.ID)
 	if err != nil {
 		return err
 	}
@@ -441,7 +450,7 @@ func (s *Store) hydrateTask(ctx context.Context, t *domain.Task) error {
 	}
 
 	var att domain.Attachment
-	err = s.db.QueryRow(ctx, `SELECT id, task_id, filename, size_bytes, storage_key, created_at FROM attachments WHERE task_id=$1 ORDER BY id LIMIT 1`, t.ID).
+	err = db.QueryRow(ctx, `SELECT id, task_id, filename, size_bytes, storage_key, created_at FROM attachments WHERE task_id=$1 ORDER BY id LIMIT 1`, t.ID).
 		Scan(&att.ID, &att.TaskID, &att.Filename, &att.SizeBytes, &att.StorageKey, &att.CreatedAt)
 	if err == nil {
 		t.Attachment = &att
@@ -453,18 +462,75 @@ func (s *Store) hydrateTask(ctx context.Context, t *domain.Task) error {
 
 // ---------- comments ----------
 
-// DeleteTask removes a task together with its comments, labels, attachments
-// and dependency links (all FK cascades). Returns ErrNotFound if the task
-// does not exist.
+// TaskBlockedError contains the tasks that prevented deletion.
+type TaskBlockedError struct {
+	Dependents []domain.Task
+}
+
+func (e *TaskBlockedError) Error() string { return "task blocks other tasks" }
+
+// DeleteTask serializes the dependency check and deletion with AddDependency.
 func (s *Store) DeleteTask(ctx context.Context, id int64) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM tasks WHERE id=$1`, id)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var projectID int64
+	err = tx.QueryRow(ctx, `SELECT project_id FROM tasks WHERE id=$1`, id).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE id=$1 FOR NO KEY UPDATE`, projectID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id=$1 AND project_id=$2)`, id, projectID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	rows, err := tx.Query(ctx, `SELECT `+taskCols+` FROM tasks WHERE id IN (SELECT task_id FROM task_dependencies WHERE depends_on=$1) ORDER BY id`, id)
+	if err != nil {
+		return err
+	}
+	dependents := []domain.Task{}
+	for rows.Next() {
+		task, err := s.scanTask(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		dependents = append(dependents, *task)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(dependents) > 0 {
+		for i := range dependents {
+			if err := hydrateTask(ctx, tx, &dependents[i]); err != nil {
+				return err
+			}
+		}
+		return &TaskBlockedError{Dependents: dependents}
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM tasks WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) AddComment(ctx context.Context, taskID, authorID int64, body string) (int64, error) {

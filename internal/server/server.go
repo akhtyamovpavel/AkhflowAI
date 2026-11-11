@@ -623,24 +623,19 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
 		return
 	}
-	dependents, err := s.Store.DependentsDetail(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if len(dependents) > 0 {
-		titles := make([]string, 0, len(dependents))
-		for _, d := range dependents {
-			titles = append(titles, fmt.Sprintf("#%d %s", d.ID, d.Title))
-		}
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":  "task blocks other tasks",
-			"blocks": dependents,
-			"detail": fmt.Sprintf("сначала уберите зависимости: %s", strings.Join(titles, ", ")),
-		})
-		return
-	}
 	if err := s.Store.DeleteTask(r.Context(), id); err != nil {
+		var blocked *store.TaskBlockedError
+		if errors.As(err, &blocked) {
+			titles := make([]string, 0, len(blocked.Dependents))
+			for _, d := range blocked.Dependents {
+				titles = append(titles, fmt.Sprintf("#%d %s", d.ID, d.Title))
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "task blocks other tasks", "blocks": blocked.Dependents,
+				"detail": fmt.Sprintf("сначала уберите зависимости: %s", strings.Join(titles, ", ")),
+			})
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
