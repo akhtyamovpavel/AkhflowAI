@@ -80,7 +80,7 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
         setState({ ...current, pending: existing, checked: false });
         return null;
       }
-      const id = crypto.randomUUID();
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, "0")).join("");
       const pending = { id, text };
       sessionStorage.setItem(current.storageKey, JSON.stringify(pending));
       if (readPending(current.storageKey)?.id !== id) throw new Error("storage write failed");
