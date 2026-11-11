@@ -24,6 +24,9 @@ const pageErrors = [];
 let mode = "delayed";
 let release;
 let started;
+let holdNextDetail = false;
+let releaseDetail;
+let detailStarted;
 let browser;
 try {
   let ready = false;
@@ -70,6 +73,14 @@ try {
         return;
       }
       data = { task: first, dependencies: [second], comments, blocks: [], history: [] };
+      if (holdNextDetail) {
+        holdNextDetail = false;
+        const snapshot = structuredClone(data);
+        detailStarted();
+        await new Promise((resolve) => { releaseDetail = resolve; });
+        await route.fulfill({ status: 200, json: snapshot }).catch(() => {});
+        return;
+      }
     } else if (path === "/api/tasks/2") {
       data = { task: second, dependencies: [first], comments: [], blocks: [], history: [] };
     }
@@ -152,11 +163,30 @@ try {
   release();
   await page.getByRole("alert").getByText("Не удалось подтвердить отправку. Проверь список комментариев перед повтором.").waitFor();
   assert.equal(await input.inputValue(), "Текст после возврата", "late failure lost the new draft");
+  mode = "success";
+  await input.fill("Первая быстрая отправка");
+  holdNextDetail = true;
+  const firstDetail = new Promise((resolve) => { detailStarted = resolve; });
+  await send.click();
+  await firstDetail;
+  await input.fill("Вторая быстрая отправка");
+  await send.click();
+  await page.getByText("Вторая быстрая отправка", { exact: true }).waitFor();
+  const staleResponse = page.waitForResponse((response) => {
+    return response.url().endsWith("/api/tasks/1") && response.request().method() === "GET";
+  });
+  releaseDetail();
+  await staleResponse;
+  await page.waitForTimeout(100);
+  assert.equal(await page.getByText("Вторая быстрая отправка", { exact: true }).count(), 1, "older refresh hid the new comment");
   assert.deepEqual(pageErrors, []);
   console.log("PASS: comments preserve new input, prevent duplicate pending writes and isolate drafts");
 } finally {
   if (release) {
     release();
+  }
+  if (releaseDetail) {
+    releaseDetail();
   }
   if (browser) {
     await browser.close();

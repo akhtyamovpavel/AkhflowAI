@@ -520,12 +520,21 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
+  const detailRequest = useRef(0);
 
   const load = useCallback(async () => {
     if (!token) return;
+    const requestVersion = ++detailRequest.current;
     const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
-    const data = await request(`/api/tasks/${taskId}`, {}, token);
+    let data;
+    try {
+      data = await request(`/api/tasks/${taskId}`, {}, token);
+    } catch (error) {
+      if (requestVersion !== detailRequest.current) return;
+      throw error;
+    }
+    if (requestVersion !== detailRequest.current) return;
     setTask(data.task);
     if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
       titleDraft.current.value = data.task.title;
