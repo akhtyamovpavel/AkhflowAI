@@ -1345,9 +1345,14 @@ function ProjectWorkspace({
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [messagesByChat, setMessagesByChat] = useState<Record<number, ChatMessage[]>>({});
+  const [messageErrors, setMessageErrors] = useState<Record<number, boolean>>({});
+  const [messageLoading, setMessageLoading] = useState<Record<number, boolean>>({});
   const [busyChats, setBusyChats] = useState<Set<number>>(() => new Set());
   const pendingChats = useRef(new Set<number>());
   const messageRequests = useRef(new Map<number, number>());
+  const messageControllers = useRef(new Map<number, AbortController>());
+  const activeChatRef = useRef(activeChat);
+  activeChatRef.current = activeChat;
   const [input, setInput] = useState("");
   const creation = useTaskCreationDraft(token, project);
   const [createRefreshError, setCreateRefreshError] = useState("");
@@ -1449,14 +1454,30 @@ function ProjectWorkspace({
 
   const loadMessages = useCallback(
     async (chatId: number) => {
-      if (pendingChats.current.has(chatId)) {
+      if (!mounted.current || pendingChats.current.has(chatId)) {
         return;
       }
       const request = (messageRequests.current.get(chatId) ?? 0) + 1;
       messageRequests.current.set(chatId, request);
-      const data: ChatMessage[] = (await workspaceApi(`/api/chats/${chatId}/messages`, {}, token)) ?? [];
-      if (messageRequests.current.get(chatId) === request) {
+      messageControllers.current.get(chatId)?.abort();
+      const controller = new AbortController();
+      messageControllers.current.set(chatId, controller);
+      const isCurrent = () => mounted.current && !controller.signal.aborted &&
+        messageRequests.current.get(chatId) === request && localStorage.getItem("akhflow.token") === token;
+      setMessageLoading((current) => ({ ...current, [chatId]: true }));
+      try {
+        const path = `/api/chats/${chatId}/messages`;
+        const data: ChatMessage[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+        if (!isCurrent()) return;
         setMessagesByChat((current) => ({ ...current, [chatId]: data }));
+        setMessageErrors((current) => ({ ...current, [chatId]: false }));
+      } catch {
+        if (!isCurrent()) return;
+        setMessageErrors((current) => ({ ...current, [chatId]: true }));
+      } finally {
+        if (isCurrent()) {
+          setMessageLoading((current) => ({ ...current, [chatId]: false }));
+        }
       }
     },
     [token, workspaceApi],
@@ -1467,7 +1488,12 @@ function ProjectWorkspace({
   }, [loadChats]);
 
   useEffect(() => {
-    if (activeChat) loadMessages(activeChat);
+    if (!activeChat) return;
+    void loadMessages(activeChat);
+    return () => {
+      messageControllers.current.get(activeChat)?.abort();
+      messageRequests.current.set(activeChat, (messageRequests.current.get(activeChat) ?? 0) + 1);
+    };
   }, [activeChat, loadMessages]);
 
   const loadEpics = useCallback(async () => {
@@ -1765,13 +1791,15 @@ function ProjectWorkspace({
   };
 
   const askAgent = async () => {
-    if (!input.trim() || !activeChat || pendingChats.current.has(activeChat)) return;
+    if (!input.trim() || !activeChat || pendingChats.current.has(activeChat) || !messagesByChat[activeChat]) return;
     const chatId = activeChat;
     const text = input.trim();
     setInput("");
     pendingChats.current.add(chatId);
     setBusyChats((current) => new Set(current).add(chatId));
+    messageControllers.current.get(chatId)?.abort();
     messageRequests.current.set(chatId, (messageRequests.current.get(chatId) ?? 0) + 1);
+    setMessageLoading((current) => ({ ...current, [chatId]: false }));
     const tempId = Date.now();
     setMessagesByChat((current) => ({
       ...current,
@@ -1800,8 +1828,8 @@ function ProjectWorkspace({
       next.delete(chatId);
       return next;
     });
-    if (sent) {
-      void loadMessages(chatId).catch(() => {});
+    if (sent && mounted.current && activeChatRef.current === chatId) {
+      void loadMessages(chatId);
     }
     loadTasks();
     loadChats();
@@ -2145,7 +2173,15 @@ function ProjectWorkspace({
                     Создай чат кнопкой «+» слева и спроси агента о задачах проекта.
                   </p>
                 )}
-                {activeChat && messages.length === 0 && (
+                {activeChat && messageErrors[activeChat] && (
+                  <div role="alert" className="space-y-2 text-sm text-destructive">
+                    <p>Не удалось загрузить историю чата.</p>
+                    <Button size="sm" variant="outline" disabled={messageLoading[activeChat]} onClick={() => void loadMessages(activeChat)}>
+                      Повторить загрузку истории
+                    </Button>
+                  </div>
+                )}
+                {activeChat && !messageErrors[activeChat] && messagesByChat[activeChat] && messages.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Попробуй: «Перемести задачу 3 в done», «Создай задачу Подготовить демо», «Что в backlog?»
                   </p>
@@ -2178,7 +2214,7 @@ function ProjectWorkspace({
                       onKeyDown={(e) => e.key === "Enter" && askAgent()}
                       placeholder="Скажи агенту, что сделать..."
                     />
-                    <Button onClick={askAgent} disabled={busy}><Send /></Button>
+                    <Button onClick={askAgent} disabled={busy || !messagesByChat[activeChat]}><Send /></Button>
                   </div>
                 )}
               </CardContent>
