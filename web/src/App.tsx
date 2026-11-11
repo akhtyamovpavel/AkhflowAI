@@ -518,6 +518,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [sendingComment, setSendingComment] = useState(commentDraft.pending);
   const [commentError, setCommentError] = useState(commentDraft.error);
   const [newDep, setNewDep] = useState("");
+  const dependencySelectionRevision = useRef(0);
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
   const detailRequest = useRef(0);
@@ -711,11 +712,14 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
 
   const addDep = async () => {
     if (!newDep) return;
+    const revision = dependencySelectionRevision.current;
     await request(`/api/tasks/${taskId}/dependencies`, {
       method: "POST",
       body: JSON.stringify({ depends_on: Number(newDep) }),
     }, token);
-    setNewDep("");
+    if (dependencySelectionRevision.current === revision) {
+      setNewDep("");
+    }
     await load();
     onChanged();
   };
@@ -911,7 +915,10 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
                 <select
                   className="min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1.5 text-sm"
                   value={newDep}
-                  onChange={(e) => setNewDep(e.target.value)}
+                  onChange={(e) => {
+                    dependencySelectionRevision.current++;
+                    setNewDep(e.target.value);
+                  }}
                 >
                   <option value="">Выберите задачу...</option>
                   {depOptions.map((t) => (
