@@ -84,6 +84,13 @@ func TestAcceptanceCriteria(t *testing.T) {
 	if got := request(viewer, "PATCH", path, `{"acceptance_criteria":"forbidden"}`); got.Code != 403 {
 		t.Fatalf("viewer: %d", got.Code)
 	}
+	boundary, err := json.Marshal(map[string]string{"acceptance_criteria": strings.Repeat("я", 8192)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request(owner, "PATCH", path, string(boundary)); got.Code != 200 {
+		t.Fatalf("valid byte boundary: %d", got.Code)
+	}
 	if got := request(owner, "PATCH", path, `{"acceptance_criteria":"проверка"}`); got.Code != 200 {
 		t.Fatalf("patch: %d %s", got.Code, got.Body)
 	}
@@ -131,5 +138,29 @@ func TestAcceptanceCriteria(t *testing.T) {
 	}
 	if _, err = createTool.Handler(ctx, toolbox.Deps{Store: db, ActorID: owner}, json.RawMessage(`{"project":"criteria","title":"Bad","acceptance_criteria":null}`)); err == nil {
 		t.Fatal("tool create accepted null")
+	}
+	old, err := db.CreateTask(ctx, domain.Task{ProjectID: project, AuthorID: owner, Title: "Old", Status: "todo", Priority: "medium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTask, err := db.TaskByID(ctx, old)
+	if err != nil || oldTask.AcceptanceCriteria != "" {
+		t.Fatalf("empty default: %+v %v", oldTask, err)
+	}
+	if got := request(owner, "PATCH", path, `{"acceptance_criteria":""}`); got.Code != 200 {
+		t.Fatalf("clear: %d", got.Code)
+	}
+	due := time.Now().UTC().AddDate(0, 0, -1)
+	master, err := db.CreateTask(ctx, domain.Task{ProjectID: project, AuthorID: owner, Title: "Recurring", Status: "todo", Priority: "medium", Recurring: "daily", DueDate: &due, AcceptanceCriteria: "повторить"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	occurrence, err := db.CreateScheduledOccurrence(ctx, master, time.Now().UTC())
+	if err != nil || occurrence == nil || occurrence.AcceptanceCriteria != "повторить" {
+		t.Fatalf("recurring snapshot: %+v %v", occurrence, err)
+	}
+	storedOccurrence, err := db.TaskByID(ctx, occurrence.ID)
+	if err != nil || storedOccurrence.AcceptanceCriteria != "повторить" {
+		t.Fatalf("recurring stored criteria: %+v %v", storedOccurrence, err)
 	}
 }
