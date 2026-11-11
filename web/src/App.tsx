@@ -554,20 +554,42 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [removingDependency, setRemovingDependency] = useState(false);
   const dependencyRemovalPending = useRef(false);
   const detailRequest = useRef(0);
+  const detailController = useRef<AbortController | null>(null);
+  const initialLoadPending = useRef(false);
+  const taskLoaded = useRef(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
     const requestVersion = ++detailRequest.current;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    if (!taskLoaded.current) {
+      initialLoadPending.current = true;
+      setInitialLoading(true);
+      setInitialError(false);
+    }
     const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
     let data;
     try {
-      data = await request(`/api/tasks/${taskId}`, {}, token);
+      data = await request(`/api/tasks/${taskId}`, { signal: controller.signal }, token);
     } catch (error) {
       if (requestVersion !== detailRequest.current) return;
+      if (!taskLoaded.current) {
+        setInitialError(true);
+      }
       throw error;
+    } finally {
+      if (requestVersion === detailRequest.current) {
+        initialLoadPending.current = false;
+        setInitialLoading(false);
+      }
     }
     if (requestVersion !== detailRequest.current) return;
+    taskLoaded.current = true;
     setTask(data.task);
     if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
       titleDraft.current.value = data.task.title;
@@ -587,9 +609,23 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     return data;
   }, [taskId, token, request]);
 
-  useEffect(() => {
-    load();
+  const loadInitial = useCallback(async () => {
+    if (initialLoadPending.current) return;
+    try {
+      await load();
+    } catch {
+      // The load handler exposes an error for the current request.
+    }
   }, [load]);
+
+  useEffect(() => {
+    void loadInitial();
+    return () => {
+      detailRequest.current++;
+      detailController.current?.abort();
+      initialLoadPending.current = false;
+    };
+  }, [loadInitial]);
 
   useEffect(() => {
     const update = (refresh: boolean) => {
@@ -617,7 +653,35 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   }, [deps, newDep]);
 
-  if (!task) return null;
+  if (!task) {
+    return (
+      <div className="fixed inset-0 z-50" onClick={onClose}>
+        <div className="absolute inset-0 bg-black/30" />
+        <div
+          className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto border-l bg-background shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b p-4">
+            <span className="text-sm text-muted-foreground">Задача #{taskId}</span>
+            <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+              <X />
+            </Button>
+          </div>
+          <div className="space-y-3 p-4">
+            {initialLoading && <p role="status">Загружаем карточку задачи...</p>}
+            {initialError && (
+              <div role="alert" className="space-y-2 text-sm text-destructive">
+                <p>Не удалось загрузить карточку задачи. Попробуй ещё раз.</p>
+                <Button size="sm" variant="outline" disabled={initialLoading} onClick={() => void loadInitial()}>
+                  Повторить загрузку
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const patch = async (body: unknown) => {
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
