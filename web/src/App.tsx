@@ -11,6 +11,7 @@ import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { AgentUsage } from "@/components/AgentUsage";
 import { AgentRuns } from "@/components/AgentRuns";
+import { isAgentRunList } from "@/lib/agentRuns";
 import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -2177,7 +2178,7 @@ function ProjectWorkspace({
   const retryUncertainMessage = async () => {
     const pending = sendGuard.state?.pending;
     const key = sendGuard.state?.storageKey;
-    if (!activeChat || !pending || !key || !sendGuard.state?.checked) return;
+    if (!activeChat || !pending || pending.kind !== "run" || !key || !sendGuard.state?.checked) return;
     const chatId = activeChat;
     chatDrafts.update(chatId, { pending: true });
     try {
@@ -2208,8 +2209,12 @@ function ProjectWorkspace({
     const chatId = activeChat;
     sendGuard.setChecked(pending.id, false);
     try {
+      if (pending.kind === "legacy") {
+        if (await loadMessages(chatId)) sendGuard.setChecked(pending.id, true);
+        return;
+      }
       const runs: unknown = await workspaceApi(`/api/chats/${chatId}/runs`, {}, token, 200);
-      if (!Array.isArray(runs)) throw new Error("invalid runs");
+      if (!isAgentRunList(runs, chatId)) throw new Error("invalid runs");
       const found = runs.some((run) => run.request_key === pending.id && run.message === pending.text && String(run.actor_id) === reminderUserId(token));
       if (found) {
         sendGuard.clear(key, pending.id);
@@ -2633,8 +2638,15 @@ function ProjectWorkspace({
                         <p>Результат отправки неизвестен. Агент мог выполнить действие или ещё выполнять его. Проверь историю перед продолжением.</p>
                         <p className="whitespace-pre-wrap">{sendGuard.state.pending.text}</p>
                         <Button size="sm" variant="outline" disabled={messageLoading[activeChat]} onClick={() => void checkUncertainMessage()}>Проверить запуск</Button>
-                        {sendGuard.state.checked && (
+                        {sendGuard.state.checked && sendGuard.state.pending.kind === "run" && (
                           <Button size="sm" variant="outline" onClick={() => void retryUncertainMessage()}>Повторить проверенную отправку</Button>
+                        )}
+                        {sendGuard.state.checked && sendGuard.state.pending.kind === "legacy" && (
+                          <Button size="sm" variant="outline" onClick={() => {
+                            const pending = sendGuard.state?.pending;
+                            const key = sendGuard.state?.storageKey;
+                            if (pending && key) sendGuard.acknowledge(key, pending.id);
+                          }}>Я проверил историю и понимаю, что действие может продолжаться</Button>
                         )}
                       </div>
                     )}

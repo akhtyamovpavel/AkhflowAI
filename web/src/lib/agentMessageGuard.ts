@@ -4,6 +4,7 @@ import { reminderUserId } from "@/lib/deadlines";
 type PendingMessage = {
   id: string;
   text: string;
+  kind: "run" | "legacy";
 };
 
 type GuardState = {
@@ -36,7 +37,9 @@ function readPending(key: string): PendingMessage | null {
   if (typeof value.id !== "string" || !value.id || typeof value.text !== "string") {
     throw new Error("invalid pending message");
   }
-  return { id: value.id, text: value.text };
+  let kind: "run" | "legacy" = "legacy";
+  if ("kind" in value && value.kind === "run") kind = "run";
+  return { id: value.id, text: value.text, kind };
 }
 
 export function useAgentMessageGuard(token: string, project: string, chatId: number | null) {
@@ -91,7 +94,7 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
       bytes[8] = (bytes[8] & 0x3f) | 0x80;
       const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
       const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-      const pending = { id, text };
+      const pending: PendingMessage = { id, text, kind: "run" };
       localStorage.setItem(current.storageKey, JSON.stringify(pending));
       if (readPending(current.storageKey)?.id !== id) throw new Error("storage write failed");
       setState({ ...current, pending, checked: false });

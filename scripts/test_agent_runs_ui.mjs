@@ -34,6 +34,8 @@ try {
   let runs = [];
   let posts = 0;
   let key = "";
+  let historyLoads = 0;
+  let invalidList = null;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -43,11 +45,12 @@ try {
     if (path === "/api/chats/1/runs" && request.method() === "POST") {
       posts++;
       key = request.headers()["idempotency-key"];
-      runs = [{ id: 4, chat_id: 1, actor_id: 1, request_key: key, message: "Проверка", status: "running", step: { iteration: 1, max_iterations: 8 }, steps: [] }];
+      runs = [{ id: 4, chat_id: 1, actor_id: 1, request_key: key, message: "Проверка", status: "running", cancel_requested: false, step: { iteration: 1, max_iterations: 8 }, steps: [] }];
       await route.abort("connectionreset");
       return;
     }
-    if (path === "/api/chats/1/runs") data = runs;
+    if (path === "/api/chats/1/messages") historyLoads++;
+    if (path === "/api/chats/1/runs") data = invalidList ?? runs;
     if (path === "/api/runs/4/cancel") {
       runs[0].status = "canceled";
       await route.fulfill({ status: 202, json: runs[0] });
@@ -77,10 +80,20 @@ try {
   await page.getByText("Результат действия не подтверждён").waitFor();
   assert.equal(await page.getByText("Действие выполняется").count(), 0);
   runs[0].status = "step_limit";
+  const beforeHistory = historyLoads;
   await page.reload();
   await page.getByRole("button", { name: "Агент", exact: true }).click();
   await page.getByText("Достигнут предел шагов", { exact: false }).waitFor();
   assert.equal(await page.getByText("Выполнено", { exact: true }).count(), 0);
+  for (let attempt = 0; historyLoads < beforeHistory + 2 && attempt < 100; attempt++) await delay(20);
+  assert.ok(historyLoads >= beforeHistory + 2, "step limit must refresh history on first poll");
+  for (const invalid of [[null], [{ id: 1, steps: {} }]]) {
+    invalidList = invalid;
+    await page.reload();
+    await page.getByRole("button", { name: "Агент", exact: true }).click();
+    await page.getByText("Не удалось обновить состояние агента", { exact: false }).waitFor();
+    assert.equal(await page.getByPlaceholder("Скажи агенту, что сделать...").count(), 1);
+  }
   console.log("PASS: recovery, switching, cancellation and step limit");
 } finally {
   if (browser) await browser.close();

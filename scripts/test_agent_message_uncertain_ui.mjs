@@ -38,6 +38,7 @@ try {
   const posts = [];
   let response = { status: 503, json: { error: "unavailable" } };
   let historyResponse = null;
+  let runList = [];
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -48,6 +49,7 @@ try {
       await route.fulfill(historyResponse);
       return;
     }
+    if (path === "/api/chats/1/runs" && request.method() === "GET") data = runList;
     if (path === "/api/chats/1/runs" && request.method() === "POST") {
       const key = request.headers()["idempotency-key"];
       const marker = await page.evaluate(() => {
@@ -98,6 +100,13 @@ try {
     assert.equal(await retry.count(), 0, "invalid history must not enable retry");
   }
   historyResponse = null;
+  for (const invalid of [[null], [{ id: 1, steps: {} }]]) {
+    runList = invalid;
+    await check.click();
+    await delay(150);
+    assert.equal(await retry.count(), 0, "invalid run list must not enable retry");
+  }
+  runList = [];
   await check.click();
   await retry.waitFor();
   historyResponse = { status: 200, json: null };
@@ -140,6 +149,24 @@ try {
     await alert.waitFor({ state: "hidden" });
     assert.equal(posts[count - 1].key, posts[count].key);
     assert.equal(await input.inputValue(), "Сохранённый черновик");
+  }
+  for (const storageName of ["sessionStorage", "localStorage"]) {
+    await page.evaluate((name) => {
+      const storageKey = JSON.stringify(["akhflow.pendingAgentMessage", "1", "alpha", 1]);
+      const marker = { id: "00000000-0000-4000-8000-000000000001", text: "Старое действие" };
+      window[name].setItem(storageKey, JSON.stringify(marker));
+    }, storageName);
+    await page.reload();
+    await page.getByRole("button", { name: "Агент", exact: true }).click();
+    await alert.waitFor();
+    await check.click();
+    const acknowledge = page.getByRole("button", { name: "Я проверил историю и понимаю, что действие может продолжаться" });
+    await acknowledge.waitFor();
+    assert.equal(await retry.count(), 0, "legacy marker must never retry through runs");
+    const count = posts.length;
+    await acknowledge.click();
+    await alert.waitFor({ state: "hidden" });
+    assert.equal(posts.length, count, "legacy acknowledgement must not send an action");
   }
   await page.addInitScript(() => {
     const original = Storage.prototype.setItem;
