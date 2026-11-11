@@ -502,11 +502,15 @@ type DependencyRemoval = {
   confirmed: boolean;
 };
 
-function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
+function TaskDetail({ taskId, project, epics, members, membersLoaded, membersError, membersLoading, onRetryMembers, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
   project: string;
   epics: Epic[];
   members: Member[];
+  membersLoaded: boolean;
+  membersError: boolean;
+  membersLoading: boolean;
+  onRetryMembers: () => void;
   tasks: Task[];
   recommendationReady: boolean;
   onOpen: (id: number) => void;
@@ -554,20 +558,42 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const [removingDependency, setRemovingDependency] = useState(false);
   const dependencyRemovalPending = useRef(false);
   const detailRequest = useRef(0);
+  const detailController = useRef<AbortController | null>(null);
+  const initialLoadPending = useRef(false);
+  const taskLoaded = useRef(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
     const requestVersion = ++detailRequest.current;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    if (!taskLoaded.current) {
+      initialLoadPending.current = true;
+      setInitialLoading(true);
+      setInitialError(false);
+    }
     const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
     let data;
     try {
-      data = await request(`/api/tasks/${taskId}`, {}, token);
+      data = await request(`/api/tasks/${taskId}`, { signal: controller.signal }, token);
     } catch (error) {
       if (requestVersion !== detailRequest.current) return;
+      if (!taskLoaded.current) {
+        setInitialError(true);
+      }
       throw error;
+    } finally {
+      if (requestVersion === detailRequest.current) {
+        initialLoadPending.current = false;
+        setInitialLoading(false);
+      }
     }
     if (requestVersion !== detailRequest.current) return;
+    taskLoaded.current = true;
     setTask(data.task);
     if (!titleDraft.current.dirty && titleDraft.current.revision === titleRevision) {
       titleDraft.current.value = data.task.title;
@@ -587,9 +613,23 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     return data;
   }, [taskId, token, request]);
 
-  useEffect(() => {
-    load();
+  const loadInitial = useCallback(async () => {
+    if (initialLoadPending.current) return;
+    try {
+      await load();
+    } catch {
+      // The load handler exposes an error for the current request.
+    }
   }, [load]);
+
+  useEffect(() => {
+    void loadInitial();
+    return () => {
+      detailRequest.current++;
+      detailController.current?.abort();
+      initialLoadPending.current = false;
+    };
+  }, [loadInitial]);
 
   useEffect(() => {
     const update = (refresh: boolean) => {
@@ -617,7 +657,35 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
     }
   }, [deps, newDep]);
 
-  if (!task) return null;
+  if (!task) {
+    return (
+      <div className="fixed inset-0 z-50" onClick={onClose}>
+        <div className="absolute inset-0 bg-black/30" />
+        <div
+          className="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto border-l bg-background shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b p-4">
+            <span className="text-sm text-muted-foreground">Задача #{taskId}</span>
+            <Button size="sm" variant="ghost" aria-label="Закрыть карточку задачи" onClick={onClose}>
+              <X />
+            </Button>
+          </div>
+          <div className="space-y-3 p-4">
+            {initialLoading && <p role="status">Загружаем карточку задачи...</p>}
+            {initialError && (
+              <div role="alert" className="space-y-2 text-sm text-destructive">
+                <p>Не удалось загрузить карточку задачи. Попробуй ещё раз.</p>
+                <Button size="sm" variant="outline" disabled={initialLoading} onClick={() => void loadInitial()}>
+                  Повторить загрузку
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const patch = async (body: unknown) => {
     await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) }, token);
@@ -1012,12 +1080,21 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
               <select
                 className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
                 value={task.assignee_id ?? ""}
+                disabled={!membersLoaded}
                 onChange={(e) => patch({ assignee_id: e.target.value ? Number(e.target.value) : null })}
               >
                 <option value="">—</option>
                 {members.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
               </select>
             </label>
+            {membersError && (
+              <div role="alert" className="col-span-2 space-y-2 text-sm">
+                <p>Не удалось загрузить участников проекта. Попробуй ещё раз.</p>
+                <Button variant="outline" size="sm" disabled={membersLoading} onClick={onRetryMembers}>
+                  Повторить загрузку участников
+                </Button>
+              </div>
+            )}
             <div className="col-span-2">
               <AssigneeSuggestion members={members} tasks={tasks} ready={recommendationReady} />
             </div>
@@ -1375,6 +1452,10 @@ function ProjectWorkspace({
   const [trelloBusy, setTrelloBusy] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [membersLoaded, setMembersLoaded] = useState(false);
+  const [membersError, setMembersError] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const membersRequest = useRef(0);
+  const membersController = useRef<AbortController | null>(null);
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
   const [showBitrixImport, setShowBitrixImport] = useState(false);
   const [bitrixGroup, setBitrixGroup] = useState("");
@@ -1526,15 +1607,35 @@ function ProjectWorkspace({
   }, [loadEpics]);
 
   const loadMembers = useCallback(async () => {
-    if (!token || !project) return;
-    setMembersLoaded(false);
-    const data: Member[] = (await workspaceApi(`/api/projects/${project}/members`, {}, token)) ?? [];
-    setMembers(data);
-    setMembersLoaded(true);
+    if (!token || !project || !mounted.current) return;
+    const request = ++membersRequest.current;
+    membersController.current?.abort();
+    const controller = new AbortController();
+    membersController.current = controller;
+    const isCurrent = () => mounted.current && request === membersRequest.current && localStorage.getItem("akhflow.token") === token;
+    setMembersLoading(true);
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/members`;
+      const data: Member[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+      if (!isCurrent()) return;
+      setMembers(data);
+      setMembersLoaded(true);
+      setMembersError(false);
+    } catch (error) {
+      if (!isCurrent() || controller.signal.aborted) return;
+      setMembersError(true);
+      throw error;
+    } finally {
+      if (isCurrent()) setMembersLoading(false);
+    }
   }, [token, project, workspaceApi]);
 
   useEffect(() => {
-    loadMembers();
+    void loadMembers().catch(() => {});
+    return () => {
+      membersRequest.current++;
+      membersController.current?.abort();
+    };
   }, [loadMembers]);
 
   const visibleTasks = tasks.filter((t) =>
@@ -1937,6 +2038,14 @@ function ProjectWorkspace({
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {membersError && !openTaskId && (
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-destructive p-3 text-sm">
+            <span>Не удалось загрузить участников проекта. Попробуй ещё раз.</span>
+            <Button variant="outline" size="sm" disabled={membersLoading} onClick={() => void loadMembers().catch(() => {})}>
+              Повторить загрузку участников
+            </Button>
+          </div>
+        )}
         {epicsError && (
           <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-destructive p-3 text-sm">
             <span>Не удалось загрузить эпики. Попробуй ещё раз.</span>
@@ -2234,6 +2343,10 @@ function ProjectWorkspace({
           project={project}
           epics={epics}
           members={members}
+          membersLoaded={membersLoaded}
+          membersError={membersError}
+          membersLoading={membersLoading}
+          onRetryMembers={() => void loadMembers().catch(() => {})}
           tasks={tasks}
           recommendationReady={membersLoaded && tasksProject === project}
           onOpen={setOpenTaskId}
