@@ -1906,6 +1906,7 @@ function ProjectWorkspace({
             aria-keyshortcuts="Alt+N"
             className="max-w-sm"
             placeholder="Новая задача..."
+            disabled={!project}
             value={creation.draft.title}
             onChange={(e) => creation.update({ title: e.target.value, revision: creation.store.snapshot.revision + 1 })}
             onKeyDown={(e) => {
