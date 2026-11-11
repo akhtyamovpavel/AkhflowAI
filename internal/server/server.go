@@ -48,6 +48,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/projects", s.Auth.Middleware(http.HandlerFunc(s.createProject)))
 	mux.Handle("GET /api/projects/{slug}/tasks", s.projectAccess("project", false, s.listTasks))
 	mux.Handle("GET /api/projects/{slug}/members", s.projectAccess("project", false, s.listMembers))
+	mux.Handle("GET /api/projects/{slug}/agent/instructions", s.projectAccess("project", false, s.getAgentInstructions))
+	mux.Handle("PUT /api/projects/{slug}/agent/instructions", s.projectAccess("project", false, s.putAgentInstructions))
 	mux.Handle("GET /api/projects/{slug}/role", s.projectAccess("project", false, s.getProjectRole))
 	mux.Handle("GET /api/projects/{slug}/dashboard-preferences", s.projectAccess("project", false, s.dashboardPreferences))
 	mux.Handle("PUT /api/projects/{slug}/dashboard-preferences", s.projectAccess("project", false, s.dashboardPreferences))

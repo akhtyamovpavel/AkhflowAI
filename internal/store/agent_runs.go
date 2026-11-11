@@ -13,23 +13,25 @@ var ErrRunConflict = errors.New("run conflict")
 var ErrRunQueueFull = errors.New("run queue full")
 
 type AgentRun struct {
-	ID              int64            `json:"id"`
-	ChatID          int64            `json:"chat_id"`
-	ActorID         int64            `json:"actor_id"`
-	RequestKey      string           `json:"request_key"`
-	Message         string           `json:"message"`
-	History         json.RawMessage  `json:"-"`
-	Status          string           `json:"status"`
-	Iteration       int              `json:"-"`
-	Tool            *string          `json:"-"`
-	Step            AgentRunProgress `json:"step"`
-	Result          json.RawMessage  `json:"result"`
-	ErrorCode       *string          `json:"error_code"`
-	CreatedAt       time.Time        `json:"created_at"`
-	StartedAt       *time.Time       `json:"started_at"`
-	FinishedAt      *time.Time       `json:"finished_at"`
-	CancelRequested bool             `json:"cancel_requested"`
-	Steps           []AgentRunStep   `json:"steps"`
+	ID                   int64            `json:"id"`
+	ChatID               int64            `json:"chat_id"`
+	ActorID              int64            `json:"actor_id"`
+	RequestKey           string           `json:"request_key"`
+	Message              string           `json:"message"`
+	History              json.RawMessage  `json:"-"`
+	InstructionsSnapshot string           `json:"-"`
+	InstructionsVersion  int64            `json:"instructions_version"`
+	Status               string           `json:"status"`
+	Iteration            int              `json:"-"`
+	Tool                 *string          `json:"-"`
+	Step                 AgentRunProgress `json:"step"`
+	Result               json.RawMessage  `json:"result"`
+	ErrorCode            *string          `json:"error_code"`
+	CreatedAt            time.Time        `json:"created_at"`
+	StartedAt            *time.Time       `json:"started_at"`
+	FinishedAt           *time.Time       `json:"finished_at"`
+	CancelRequested      bool             `json:"cancel_requested"`
+	Steps                []AgentRunStep   `json:"steps"`
 }
 type AgentRunProgress struct {
 	Iteration     int     `json:"iteration"`
@@ -46,11 +48,11 @@ type AgentRunStep struct {
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
-const runColumns = `id,chat_id,actor_id,request_key::text,message,history,status,iteration,tool,result,error_code,created_at,started_at,finished_at,cancel_requested`
+const runColumns = `id,chat_id,actor_id,request_key::text,message,history,status,iteration,tool,result,error_code,created_at,started_at,finished_at,cancel_requested,instructions_snapshot,instructions_version`
 
 func scanRun(row pgx.Row) (*AgentRun, error) {
 	r := &AgentRun{Steps: []AgentRunStep{}}
-	err := row.Scan(&r.ID, &r.ChatID, &r.ActorID, &r.RequestKey, &r.Message, &r.History, &r.Status, &r.Iteration, &r.Tool, &r.Result, &r.ErrorCode, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.CancelRequested)
+	err := row.Scan(&r.ID, &r.ChatID, &r.ActorID, &r.RequestKey, &r.Message, &r.History, &r.Status, &r.Iteration, &r.Tool, &r.Result, &r.ErrorCode, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.CancelRequested, &r.InstructionsSnapshot, &r.InstructionsVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +99,7 @@ func (s *Store) EnqueueRun(ctx context.Context, chatID, actorID int64, key, mess
 	if err = tx.QueryRow(ctx, query, chatID).Scan(&history); err != nil {
 		return nil, err
 	}
-	query = `INSERT INTO agent_runs(chat_id,actor_id,request_key,message,history,status) VALUES($1,$2,$3::uuid,$4,$5,'queued') RETURNING ` + runColumns
+	query = `INSERT INTO agent_runs(chat_id,actor_id,request_key,message,history,status,instructions_snapshot,instructions_version) SELECT $1,$2,$3::uuid,$4,$5,'queued',p.agent_instructions,p.agent_instructions_version FROM agent_chats c JOIN projects p ON p.id=c.project_id WHERE c.id=$1 RETURNING ` + runColumns
 	run, err := scanRun(tx.QueryRow(ctx, query, chatID, actorID, key, message, history))
 	if err != nil {
 		return nil, err
