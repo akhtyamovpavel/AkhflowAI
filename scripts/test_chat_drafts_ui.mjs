@@ -61,7 +61,7 @@ try {
       data = { requests: 0, replies: 0, tool_calls: 0 };
     } else if (path.endsWith("/chats")) {
       data = [{ id: 1, title: "Первый чат" }, { id: 2, title: "Второй чат" }];
-    } else if (path.match(/^\/api\/chats\/\d+\/messages$/) && request.method() === "POST") {
+    } else if (path.match(/^\/api\/chats\/\d+\/runs$/) && request.method() === "POST") {
       posts.push({ path, body: request.postDataJSON() });
       postStarted();
       await pendingPost;
@@ -69,7 +69,10 @@ try {
         await route.fulfill({ status: 503, json: { error: "unavailable" } }).catch(() => {});
         return;
       }
-      data = { reply: "Ответ агента", tool_calls: null, iterations: 1 };
+      const chatId = Number(path.split("/")[3]);
+      data = { id: 1, chat_id: chatId, request_key: request.headers()["idempotency-key"], status: "queued" };
+      await route.fulfill({ status: 202, json: data }).catch(() => {});
+      return;
     }
     await route.fulfill({ json: data }).catch(() => {});
   });
@@ -109,11 +112,13 @@ try {
   await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
   assert.equal(await input.inputValue(), "Новый текст после ошибки", "failed send erased newer input");
   await page.getByText("Черновик первого", { exact: true }).first().waitFor();
-  assert.equal(posts[0].path, "/api/chats/1/messages");
+  assert.equal(posts[0].path, "/api/chats/1/runs");
   await input.press("Enter");
   assert.equal(posts.length, 1, "uncertain send must block the next POST");
-  await page.getByRole("button", { name: "Проверить историю" }).click();
-  await page.getByRole("button", { name: "Я проверил историю и понимаю, что действие может продолжаться" }).click();
+  await page.getByRole("button", { name: "Проверить запуск" }).click();
+  mode = "success";
+  await page.getByRole("button", { name: "Повторить проверенную отправку" }).click();
+  await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor({ state: "hidden" });
   assert.equal(await input.inputValue(), "Новый текст после ошибки", "acknowledgement erased newer input");
 
   mode = "hold";
@@ -132,7 +137,7 @@ try {
   await input.waitFor();
   assert.equal(await input.inputValue(), "Новый текст после отправки");
   await input.press("Enter");
-  assert.equal(posts.length, 2, "pending send was repeated after a project switch");
+  assert.equal(posts.length, 3, "pending send was repeated after a project switch");
   releasePost();
   await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
   assert.equal(await input.inputValue(), "Новый текст после отправки", "late success erased a newer draft");
@@ -153,7 +158,7 @@ try {
   await page.getByRole("button", { name: "Агент", exact: true }).click();
   await input.waitFor();
   assert.equal(await input.inputValue(), "Новый текст после отправки");
-  assert.equal(posts.length, 2);
+  assert.equal(posts.length, 3);
   console.log("PASS: chat drafts stay scoped and survive failed or late sends");
 } finally {
   releasePost();

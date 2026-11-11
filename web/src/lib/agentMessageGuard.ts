@@ -27,7 +27,7 @@ async function storageKeyFor(token: string, project: string, chatId: number): Pr
 }
 
 function readPending(key: string): PendingMessage | null {
-  const raw = sessionStorage.getItem(key);
+  const raw = localStorage.getItem(key);
   if (raw === null) return null;
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object" || !("id" in value) || !("text" in value)) {
@@ -60,8 +60,14 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
     void (async () => {
       try {
         const storageKey = await storageKeyFor(token, project, chatId);
-        const pending = readPending(storageKey);
-        const acknowledged = sessionStorage.getItem(`${storageKey}.acknowledged`) === "1";
+        let pending = readPending(storageKey);
+        const previous = sessionStorage.getItem(storageKey);
+        if (!pending && previous !== null) {
+          localStorage.setItem(storageKey, previous);
+          pending = readPending(storageKey);
+          sessionStorage.removeItem(storageKey);
+        }
+        const acknowledged = localStorage.getItem(`${storageKey}.acknowledged`) === "1";
         if (cancelled) return;
         setState({ context, storageKey, ready: true, storageError: false, pending, checked: false, acknowledged });
       } catch {
@@ -86,7 +92,7 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
       const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
       const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
       const pending = { id, text };
-      sessionStorage.setItem(current.storageKey, JSON.stringify(pending));
+      localStorage.setItem(current.storageKey, JSON.stringify(pending));
       if (readPending(current.storageKey)?.id !== id) throw new Error("storage write failed");
       setState({ ...current, pending, checked: false });
       return { key: current.storageKey, id };
@@ -99,8 +105,8 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
   const clear = (key: string, id: string): boolean => {
     try {
       if (readPending(key)?.id !== id) return false;
-      sessionStorage.removeItem(key);
-      if (sessionStorage.getItem(key) !== null) throw new Error("storage removal failed");
+      localStorage.removeItem(key);
+      if (localStorage.getItem(key) !== null) throw new Error("storage removal failed");
       setState((previous) => {
         if (previous.context !== latestContext.current || previous.storageKey !== key || previous.pending?.id !== id) {
           return previous;
@@ -127,8 +133,8 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
   const acknowledge = (key: string, id: string) => {
     try {
       if (readPending(key)?.id !== id) return;
-      sessionStorage.setItem(`${key}.acknowledged`, "1");
-      if (sessionStorage.getItem(`${key}.acknowledged`) !== "1") throw new Error("storage write failed");
+      localStorage.setItem(`${key}.acknowledged`, "1");
+      if (localStorage.getItem(`${key}.acknowledged`) !== "1") throw new Error("storage write failed");
       if (clear(key, id)) {
         setState((previous) => previous.context === latestContext.current && previous.storageKey === key
           ? { ...previous, acknowledged: true }
