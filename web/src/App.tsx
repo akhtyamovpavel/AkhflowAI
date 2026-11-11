@@ -11,6 +11,7 @@ import { EmailNotifications } from "@/components/EmailNotifications";
 import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { AgentUsage } from "@/components/AgentUsage";
 import { AgentRuns } from "@/components/AgentRuns";
+import { AgentInstructions } from "@/components/AgentInstructions";
 import { TaskAgentRuns } from "@/components/TaskAgentRuns";
 import { isAgentRunList } from "@/lib/agentRuns";
 import type { AgentUsageData } from "@/components/AgentUsage";
@@ -2274,6 +2275,7 @@ function ProjectWorkspace({
               <Plus /> Проект
             </Button>
           )}
+          {project && <AgentInstructions project={project} token={token} request={workspaceApi} />}
           {project && <AkhcheckImport project={project} token={token} onImported={loadTasks} request={workspaceApi} />}
           <select
             className="h-8 rounded-md border bg-transparent px-2 text-sm"

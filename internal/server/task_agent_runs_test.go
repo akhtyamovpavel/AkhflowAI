@@ -52,6 +52,10 @@ func TestTaskRunsSnapshotAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rules, err := db.UpdateAgentInstructions(ctx, project, owner, 0, "Original project rules")
+	if err != nil || rules == nil || rules.Version != 1 {
+		t.Fatalf("initial rules: %+v %v", rules, err)
+	}
 	key := "00000000-0000-4000-8000-000000000001"
 	ids := make(chan int64, 10)
 	failures := make(chan error, 10)
@@ -86,9 +90,16 @@ func TestTaskRunsSnapshotAndIdempotency(t *testing.T) {
 	if err = db.UpdateTask(ctx, taskID, []string{"title=$1", "description=$2"}, []any{"Changed title", "Changed description"}); err != nil {
 		t.Fatal(err)
 	}
+	rules, err = db.UpdateAgentInstructions(ctx, project, owner, 1, "Changed project rules")
+	if err != nil || rules == nil || rules.Version != 2 {
+		t.Fatalf("updated rules: %+v %v", rules, err)
+	}
 	replay, err := db.EnqueueTaskRun(ctx, taskID, owner, key, "inspect")
 	if err != nil || replay.ID != runID {
 		t.Fatalf("replay: %+v %v", replay, err)
+	}
+	if replay.InstructionsVersion != 1 || replay.InstructionsSnapshot != "Original project rules" {
+		t.Fatalf("incorrect rules snapshot: %+v", replay)
 	}
 	if _, err = db.EnqueueTaskRun(ctx, taskID, owner, key, "different"); !errors.Is(err, store.ErrAgentRequestConflict) {
 		t.Fatalf("conflict: %v", err)
@@ -120,7 +131,7 @@ func TestTaskRunsSnapshotAndIdempotency(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		captured <- body.Messages[len(body.Messages)-1].Content
+		captured <- body.Messages[0].Content + "\n" + body.Messages[len(body.Messages)-1].Content
 		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`)
 	}))
 	defer model.Close()
@@ -154,7 +165,7 @@ func TestTaskRunsSnapshotAndIdempotency(t *testing.T) {
 	defer func() { stop(); <-done }()
 	select {
 	case prompt := <-captured:
-		if !strings.Contains(prompt, "Original title") || !strings.Contains(prompt, "Original description") || strings.Contains(prompt, "Changed title") {
+		if !strings.Contains(prompt, "Original title") || !strings.Contains(prompt, "Original description") || strings.Contains(prompt, "Changed title") || !strings.Contains(prompt, "Original project rules") || strings.Contains(prompt, "Changed project rules") {
 			t.Fatalf("wrong prompt: %s", prompt)
 		}
 	case <-time.After(5 * time.Second):

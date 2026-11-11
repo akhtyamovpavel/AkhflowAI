@@ -205,7 +205,7 @@ func (s *Server) executeRun(parent context.Context, run *store.AgentRun, token s
 			history[i].Role = "assistant"
 		}
 	}
-	agent := llm.Agent{Client: s.LLM, Deps: toolbox.Deps{Store: s.Store, Bus: s.Bus, ActorID: run.ActorID, Actor: user.Email, ProjectID: chat.ProjectID}}
+	agent := llm.Agent{Instructions: run.InstructionsSnapshot, Client: s.LLM, Deps: toolbox.Deps{Store: s.Store, Bus: s.Bus, ActorID: run.ActorID, Actor: user.Email, ProjectID: chat.ProjectID}}
 	stepPersistenceFailed := false
 	stepsStarted := 0
 	agent.BeforeTool = func(iteration, sequence int, name string) error {
