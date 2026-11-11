@@ -69,7 +69,7 @@ try {
         await route.fulfill({ status: 503, json: { error: "unavailable" } }).catch(() => {});
         return;
       }
-      data = { reply: "Ответ агента" };
+      data = { reply: "Ответ агента", tool_calls: null, iterations: 1 };
     }
     await route.fulfill({ json: data }).catch(() => {});
   });

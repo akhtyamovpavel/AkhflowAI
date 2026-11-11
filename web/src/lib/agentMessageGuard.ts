@@ -113,10 +113,10 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
     }
   };
 
-  const markChecked = (id: string) => {
+  const setChecked = (id: string, checked: boolean) => {
     setState((previous) => {
       if (previous.context !== latestContext.current || previous.pending?.id !== id) return previous;
-      return { ...previous, checked: true };
+      return { ...previous, checked };
     });
   };
 
@@ -137,5 +137,5 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
     }
   };
 
-  return { state: current, remember, clear, markChecked, acknowledge };
+  return { state: current, remember, clear, setChecked, acknowledge };
 }

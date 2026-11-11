@@ -46,7 +46,9 @@ try {
   }, token);
 
   let posts = 0;
+  const responses = [];
   let failHistory = false;
+  let historyOverride = null;
   let saved = false;
   let postStarted;
   const firstPost = new Promise((resolve) => { postStarted = resolve; });
@@ -76,11 +78,21 @@ try {
       if (posts === 3) {
         latePostStarted();
         await lateResponseWait;
-        await route.fulfill({ status: 200, json: { reply: "Запоздалый ответ" } }).catch(() => {});
+        await route.fulfill({ status: 200, json: { reply: "Запоздалый ответ", tool_calls: null, iterations: 1 } }).catch(() => {});
         return;
       }
-      data = { reply: "Новый ответ" };
+      if (posts > 3) {
+        const response = responses.shift();
+        assert.ok(response, "unexpected POST");
+        await route.fulfill(response).catch(() => {});
+        return;
+      }
+      data = { reply: "Новый ответ", tool_calls: [], iterations: 1 };
     } else if (path === "/api/chats/1/messages") {
+      if (historyOverride) {
+        await route.fulfill(historyOverride).catch(() => {});
+        return;
+      }
       if (failHistory) {
         await route.fulfill({ status: 503, json: { error: "unavailable" } }).catch(() => {});
         return;
@@ -120,6 +132,25 @@ try {
   await page.getByText("Не удалось загрузить историю чата").waitFor();
   assert.equal(await confirm.count(), 0, "failed history check must not enable acknowledgement");
   failHistory = false;
+  for (const response of [
+    { status: 200, body: "null", contentType: "application/json" },
+    { status: 200, json: { messages: [] } },
+    { status: 200, json: [{ id: 10, role: "user" }] },
+    { status: 202, json: [] },
+  ]) {
+    historyOverride = response;
+    await page.getByRole("button", { name: "Проверить историю" }).click();
+    await page.getByText("Не удалось загрузить историю чата").waitFor();
+    assert.equal(await confirm.count(), 0, "malformed history must not enable acknowledgement");
+  }
+  historyOverride = null;
+  await page.getByRole("button", { name: "Проверить историю" }).click();
+  await confirm.waitFor();
+  historyOverride = { status: 200, body: "null", contentType: "application/json" };
+  await page.getByRole("button", { name: "Проверить историю" }).click();
+  await page.getByText("Не удалось загрузить историю чата").waitFor();
+  assert.equal(await confirm.count(), 0, "a later malformed check must revoke acknowledgement");
+  historyOverride = null;
   await page.getByRole("button", { name: "Проверить историю" }).click();
   await confirm.waitFor();
   assert.equal(posts, 1, "history checks must never repeat POST");
@@ -135,6 +166,7 @@ try {
   await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
   await page.getByRole("button", { name: "Проверить историю" }).click();
   await confirm.click();
+
   await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor({ state: "hidden" });
   await page.getByText("Предыдущее действие с неизвестным результатом всё ещё может выполняться", { exact: false }).waitFor();
   assert.equal(posts, 1, "acknowledging must never send another POST");
@@ -159,6 +191,39 @@ try {
   await page.getByRole("button", { name: "Проверить историю" }).click();
   await confirm.click();
 
+  const malformedResponses = [
+    { status: 200, json: { error: "upstream incomplete" } },
+    { status: 200, json: null },
+    { status: 200, json: { reply: null, tool_calls: null, iterations: 1 } },
+    { status: 200, json: { reply: "", tool_calls: null, iterations: 1 } },
+    { status: 200, json: { reply: "ok", tool_calls: [{ tool: "create_task" }], iterations: 1 } },
+    { status: 200, json: { reply: "ok", tool_calls: null } },
+    { status: 200, body: "{broken", contentType: "application/json" },
+    { status: 202, json: { reply: "ещё выполняется", tool_calls: null, iterations: 1 } },
+    { status: 200, json: { reply: "ok", tool_calls: null, iterations: 1, error: "partial" } },
+  ];
+  for (const response of malformedResponses) {
+    responses.push(response);
+    const expectedPosts = posts + 1;
+    await input.fill("Ответ с нарушенным контрактом");
+    await input.press("Enter");
+    await page.getByRole("alert").filter({ hasText: "Результат отправки неизвестен" }).waitFor();
+    await input.fill("Сохранённый новый черновик");
+    await input.press("Enter");
+    assert.equal(posts, expectedPosts, "malformed success must never release the guard");
+    await page.getByRole("button", { name: "Проверить историю" }).click();
+    await confirm.click();
+    assert.equal(await input.inputValue(), "Сохранённый новый черновик");
+  }
+  responses.push({ status: 200, json: { reply: "Ответ без вызовов", tool_calls: null, iterations: 1 } });
+  const expectedSuccessfulPosts = posts + 1;
+  await input.fill("Корректный запрос");
+  await input.press("Enter");
+  for (let attempt = 0; posts < expectedSuccessfulPosts && attempt < 100; attempt++) await delay(20);
+  assert.equal(posts, expectedSuccessfulPosts, "valid reply should be sent");
+  await page.waitForFunction(() => !Object.keys(sessionStorage).some((key) => key.includes("akhflow.pendingAgentMessage") && !key.endsWith(".acknowledged")));
+  const expectedPosts = posts;
+
   await page.addInitScript(() => {
     const originalSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
@@ -172,7 +237,7 @@ try {
   await input.fill("Не отправлять без маркера");
   await input.press("Enter");
   await page.getByRole("alert").filter({ hasText: "Не удалось сохранить состояние отправки" }).waitFor();
-  assert.equal(posts, 3, "failed marker persistence must prevent POST");
+  assert.equal(posts, expectedPosts, "failed marker persistence must prevent POST");
   console.log("PASS: uncertain agent sends require explicit history review and do not repeat automatically");
 } finally {
   releaseResponse();

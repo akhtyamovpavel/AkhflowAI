@@ -181,9 +181,9 @@ function useToken() {
   return [token, save] as const;
 }
 
-type ApiRequest = (path: string, opts?: RequestInit, token?: string | null) => Promise<any>;
+type ApiRequest = (path: string, opts?: RequestInit, token?: string | null, expectedStatus?: number) => Promise<any>;
 
-export async function api(path: string, opts: RequestInit = {}, token?: string | null, onForbidden?: () => void) {
+export async function api(path: string, opts: RequestInit = {}, token?: string | null, onForbidden?: () => void, expectedStatus?: number) {
   const res = await fetch(API + path, {
     ...opts,
     headers: {
@@ -204,7 +204,34 @@ export async function api(path: string, opts: RequestInit = {}, token?: string |
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
   }
+  if (expectedStatus !== undefined && res.status !== expectedStatus) throw new Error("unexpected response status");
   return res.json();
+}
+
+function isToolCallList(value: unknown): value is NonNullable<ChatMessage["tool_calls"]> {
+  return Array.isArray(value) && value.every((call: unknown) => {
+    if (!call || typeof call !== "object" || Array.isArray(call)) return false;
+    const log = call as Record<string, unknown>;
+    return typeof log.tool === "string" && typeof log.args === "string" && typeof log.result === "string";
+  });
+}
+
+function isCompletedAgentResponse(value: unknown): value is { reply: string; tool_calls: NonNullable<ChatMessage["tool_calls"]> | null; iterations: number } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  if ("error" in result || typeof result.reply !== "string" || !result.reply.trim() ||
+      !Number.isSafeInteger(result.iterations) || (result.iterations as number) < 1) return false;
+  return result.tool_calls === null || isToolCallList(result.tool_calls);
+}
+
+function isChatHistory(value: unknown): value is ChatMessage[] {
+  return Array.isArray(value) && value.every((entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const message = entry as Record<string, unknown>;
+    return Number.isSafeInteger(message.id) && (message.id as number) > 0 &&
+      typeof message.role === "string" && typeof message.content === "string" &&
+      (message.tool_calls === undefined || message.tool_calls === null || isToolCallList(message.tool_calls));
+  });
 }
 
 function AkhcheckImport({ project, token, onImported, request }: { project: string; token: string | null; onImported: () => Promise<void>; request: ApiRequest }) {
@@ -1533,10 +1560,10 @@ function ProjectWorkspace({
       chatsController.current?.abort();
     };
   }, []);
-  const workspaceApi = useCallback<ApiRequest>((path, options, requestToken) => {
+  const workspaceApi = useCallback<ApiRequest>((path, options, requestToken, expectedStatus) => {
     return api(path, options, requestToken, () => {
       if (mounted.current) setAccessError(true);
-    });
+    }, expectedStatus);
   }, []);
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -1714,7 +1741,8 @@ function ProjectWorkspace({
       setMessageLoading((current) => ({ ...current, [chatId]: true }));
       try {
         const path = `/api/chats/${chatId}/messages`;
-        const data: ChatMessage[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+        const data: unknown = await workspaceApi(path, { signal: controller.signal }, token, 200);
+        if (!isChatHistory(data)) throw new Error("invalid chat history");
         if (!isCurrent()) return false;
         setMessagesByChat((current) => ({ ...current, [chatId]: data }));
         setMessageErrors((current) => ({ ...current, [chatId]: false }));
@@ -2124,12 +2152,13 @@ function ProjectWorkspace({
         method: "POST",
         body: JSON.stringify({ message: text }),
         signal: controller.signal,
-      }, token);
+      }, token, 200);
+      if (!isCompletedAgentResponse(data)) throw new Error("invalid agent response");
       sendGuard.clear(operation.key, operation.id);
       if (!mounted.current || controller.signal.aborted || localStorage.getItem("akhflow.token") !== token) return;
       setMessagesByChat((current) => ({
         ...current,
-        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls }],
+        [chatId]: [...(current[chatId] ?? []), { id: tempId + 1, role: "agent", content: data.reply, tool_calls: data.tool_calls ?? undefined }],
       }));
       sent = true;
     } catch {
@@ -2148,7 +2177,8 @@ function ProjectWorkspace({
   const checkUncertainMessage = async () => {
     const pending = sendGuard.state?.pending;
     if (!activeChat || !pending || chatDrafts.store.snapshot[activeChat]?.pending) return;
-    if (await loadMessages(activeChat)) sendGuard.markChecked(pending.id);
+    sendGuard.setChecked(pending.id, false);
+    if (await loadMessages(activeChat)) sendGuard.setChecked(pending.id, true);
   };
 
   const messages = activeChat ? messagesByChat[activeChat] ?? [] : [];

@@ -71,7 +71,7 @@ try {
       await answer;
       chatOne.push({ id: 12, role: "user", content: "Вопрос первому" });
       chatOne.push({ id: 13, role: "agent", content: "Ответ первому" });
-      data = { reply: "Ответ первому" };
+      data = { reply: "Ответ первому", tool_calls: null, iterations: 1 };
     }
     await route.fulfill({ status: 200, json: data });
   });
