@@ -32,6 +32,7 @@ type Task = {
   status: string;
   priority: string;
   description?: string;
+  acceptance_criteria?: string;
   labels?: string[];
   due_date?: string;
   epic_id?: number | null;
@@ -104,6 +105,7 @@ const FIELD_LABELS: Record<string, string> = {
   status: "статус",
   priority: "приоритет",
   description: "описание",
+  acceptance_criteria: "критерии приёмки",
   due_date: "дедлайн",
   epic_id: "эпик",
   assignee_id: "исполнитель",
@@ -568,6 +570,16 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [desc, setDesc] = useState("");
   const description = useRef({ value: "", saved: "", version: 0 });
+  const [criteria, setCriteria] = useState("");
+  const criteriaDraft = useRef({ value: "", saved: "", version: 0 });
+  const criteriaSaving = useRef(false);
+  const criteriaMounted = useRef(false);
+  const [savingCriteria, setSavingCriteria] = useState(false);
+  const [criteriaError, setCriteriaError] = useState("");
+  useEffect(() => {
+    criteriaMounted.current = true;
+    return () => { criteriaMounted.current = false; };
+  }, []);
   const [savingDescription, setSavingDescription] = useState(false);
   const descriptionSaving = useRef(false);
   const [descriptionError, setDescriptionError] = useState("");
@@ -610,6 +622,7 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
     }
     const titleRevision = titleDraft.current.revision;
     const version = description.current.version;
+    const criteriaVersion = criteriaDraft.current.version;
     let data;
     try {
       data = await request(`/api/tasks/${taskId}`, { signal: controller.signal }, token);
@@ -642,6 +655,13 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
       draft.value = value;
       draft.saved = value;
       setDesc(value);
+    }
+    const criteriaState = criteriaDraft.current;
+    if (criteriaState.version === criteriaVersion && criteriaState.value === criteriaState.saved) {
+      const value = data.task.acceptance_criteria ?? "";
+      criteriaState.value = value;
+      criteriaState.saved = value;
+      setCriteria(value);
     }
     return data;
   }, [taskId, token, request]);
@@ -805,8 +825,38 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
     }
   };
 
+  const saveCriteria = async () => {
+    if (criteriaSaving.current || !token) return;
+    const value = criteriaDraft.current.value;
+    if (new TextEncoder().encode(value).length > 16384 || value.includes("\0")) {
+      setCriteriaError("Критерии должны занимать не больше 16 КиБ и не содержать нулевой символ.");
+      return;
+    }
+    criteriaSaving.current = true;
+    setSavingCriteria(true);
+    setCriteriaError("");
+    try {
+      await request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ acceptance_criteria: value }) }, token);
+      if (!criteriaMounted.current || localStorage.getItem("akhflow.token") !== token) return;
+      criteriaDraft.current.saved = value;
+      criteriaDraft.current.version += 1;
+      const updates = await Promise.allSettled([load(), Promise.resolve().then(onChanged)]);
+      if (criteriaMounted.current && localStorage.getItem("akhflow.token") === token && updates.some((result) => result.status === "rejected")) {
+        setCriteriaError("Критерии сохранены, но обновить карточку не удалось.");
+      }
+    } catch {
+      if (criteriaMounted.current && localStorage.getItem("akhflow.token") === token) setCriteriaError("Не удалось сохранить критерии. Попробуй ещё раз.");
+    } finally {
+      criteriaSaving.current = false;
+      if (criteriaMounted.current && localStorage.getItem("akhflow.token") === token) setSavingCriteria(false);
+    }
+  };
+
   const canLeave = () => {
-    if (descriptionSaving.current || commentDraft.pending) return false;
+    if (descriptionSaving.current || criteriaSaving.current || commentDraft.pending) return false;
+    if (criteriaDraft.current.value !== criteriaDraft.current.saved) {
+      if (!window.confirm("Критерии приёмки не сохранены. Закрыть карточку и потерять изменения?")) return false;
+    }
     if (description.current.value !== description.current.saved) {
       return window.confirm("Описание не сохранено. Закрыть карточку и потерять изменения?");
     }
@@ -1166,6 +1216,21 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
               </Button>
             )}
             <Button size="sm" variant="outline" disabled={savingDescription} onClick={saveDescription}>Сохранить</Button>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground" htmlFor={`criteria-${taskId}`}>Критерии приёмки</label>
+            <textarea
+              id={`criteria-${taskId}`}
+              className="min-h-24 w-full rounded-md border bg-transparent p-2 text-sm"
+              value={criteria}
+              disabled={savingCriteria}
+              onChange={(event) => {
+                criteriaDraft.current.value = event.target.value;
+                setCriteria(event.target.value);
+              }}
+            />
+            {criteriaError && <p role="alert" className="text-sm text-destructive">{criteriaError}</p>}
+            <Button size="sm" variant="outline" disabled={savingCriteria} onClick={() => void saveCriteria()}>Сохранить критерии</Button>
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">Зависит от ({deps.length})</div>

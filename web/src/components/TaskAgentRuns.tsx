@@ -174,7 +174,7 @@ export function TaskAgentRuns({ taskId, project, token, request, onChanged, onOp
   return (
     <section className="space-y-2 border-t pt-3" aria-label="Агент для задачи">
       <h3 className="text-sm font-medium">Агент для задачи</h3>
-      <p className="text-xs text-muted-foreground">Агент получит сохранённые заголовок и описание задачи.</p>
+      <p className="text-xs text-muted-foreground">Агент получит сохранённые заголовок, описание и критерии приёмки задачи.</p>
       <textarea aria-label="Запрос агенту" className="w-full rounded-md border bg-transparent p-2 text-sm" value={pending?.message ?? message} disabled={busy || !!pending} onChange={(event) => setMessage(event.target.value)} />
       <Button size="sm" disabled={busy || !actorId || !["owner", "admin", "editor", "member"].includes(role) || (!pending && !message.trim())} onClick={() => void send(pending)}>
         {pending ? "Повторить запрос" : "Запустить агента"}
