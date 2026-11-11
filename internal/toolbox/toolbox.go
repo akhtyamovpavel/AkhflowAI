@@ -18,6 +18,8 @@ type Deps struct {
 	ActorID int64
 	Actor   string
 	Bus     *events.Bus
+	// ProjectID confines a run to one project when nonzero.
+	ProjectID int64
 }
 
 type Result struct {
