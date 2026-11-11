@@ -108,6 +108,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.Store.CreateUser(r.Context(), req.Email, req.DisplayName, s.Auth.HashPassword(req.Password))
+	if errors.Is(err, store.ErrUserExists) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "user exists"})
+		return
+	}
 	if err != nil {
 		authServiceUnavailable(w)
 		return

@@ -21,6 +21,7 @@ import (
 var migrationsFS embed.FS
 
 var ErrNotFound = errors.New("not found")
+var ErrUserExists = errors.New("user already exists")
 
 type Store struct {
 	db *pgxpool.Pool
@@ -100,7 +101,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 
 func (s *Store) CreateUser(ctx context.Context, email, displayName, passwordHash string) (int64, error) {
 	var id int64
-	err := s.db.QueryRow(ctx, `INSERT INTO users(email, display_name, password_hash) VALUES($1,$2,$3) RETURNING id`, email, displayName, passwordHash).Scan(&id)
+	query := `INSERT INTO users(email, display_name, password_hash) VALUES($1,$2,$3) ON CONFLICT (email) DO NOTHING RETURNING id`
+	err := s.db.QueryRow(ctx, query, email, displayName, passwordHash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrUserExists
+	}
 	return id, err
 }
 
