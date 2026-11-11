@@ -27,6 +27,7 @@ let started;
 let holdNextDetail = false;
 let releaseDetail;
 let detailStarted;
+let detailFinished;
 let browser;
 try {
   let ready = false;
@@ -79,6 +80,7 @@ try {
         detailStarted();
         await new Promise((resolve) => { releaseDetail = resolve; });
         await route.fulfill({ status: 200, json: snapshot }).catch(() => {});
+        detailFinished();
         return;
       }
     } else if (path === "/api/tasks/2") {
@@ -172,9 +174,7 @@ try {
   await input.fill("Вторая быстрая отправка");
   await send.click();
   await page.getByText("Вторая быстрая отправка", { exact: true }).waitFor();
-  const staleResponse = page.waitForResponse((response) => {
-    return response.url().endsWith("/api/tasks/1") && response.request().method() === "GET";
-  });
+  const staleResponse = new Promise((resolve) => { detailFinished = resolve; });
   releaseDetail();
   await staleResponse;
   await page.waitForTimeout(100);
