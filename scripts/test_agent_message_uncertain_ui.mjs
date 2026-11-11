@@ -50,10 +50,13 @@ try {
   let failHistory = false;
   let historyOverride = null;
   let saved = false;
+  let successfulPostSaved = false;
   let postStarted;
   const firstPost = new Promise((resolve) => { postStarted = resolve; });
   let latePostStarted;
   const latePost = new Promise((resolve) => { latePostStarted = resolve; });
+  let secondPostHistoryLoaded;
+  const secondPostHistory = new Promise((resolve) => { secondPostHistoryLoaded = resolve; });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -87,6 +90,7 @@ try {
         await route.fulfill(response).catch(() => {});
         return;
       }
+      successfulPostSaved = true;
       data = { reply: "Новый ответ", tool_calls: [], iterations: 1 };
     } else if (path === "/api/chats/1/messages") {
       if (historyOverride) {
@@ -98,6 +102,15 @@ try {
         return;
       }
       data = saved ? [{ id: 10, role: "user", content: "Действие первому" }] : [];
+      if (posts === 2) {
+        // This history-only message proves the GET has rendered before checking the saved reply.
+        data.push({ id: 11, role: "user", content: "История после успешного POST" });
+        if (successfulPostSaved) {
+          data.push({ id: 12, role: "user", content: "Новый вопрос" });
+          data.push({ id: 13, role: "agent", content: "Новый ответ", tool_calls: [] });
+        }
+        secondPostHistoryLoaded();
+      }
     }
     await route.fulfill({ status: 200, json: data }).catch(() => {});
   });
@@ -172,7 +185,9 @@ try {
   assert.equal(posts, 1, "acknowledging must never send another POST");
   await input.fill("Новый вопрос");
   await input.press("Enter");
-  await page.getByText("Новый ответ").waitFor();
+  await secondPostHistory;
+  await page.getByText("История после успешного POST").waitFor();
+  await page.getByText("Новый ответ").waitFor({ timeout: 3000 });
   assert.equal(posts, 2);
   const markers = await page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.includes("akhflow.pendingAgentMessage") && !key.endsWith(".acknowledged")));
   assert.equal(markers.length, 0, "a successful response must clear its marker");
