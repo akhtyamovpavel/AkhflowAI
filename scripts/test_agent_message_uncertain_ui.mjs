@@ -168,6 +168,23 @@ try {
     await alert.waitFor({ state: "hidden" });
     assert.equal(posts.length, count, "legacy acknowledgement must not send an action");
   }
+  await page.evaluate(() => {
+    const key = JSON.stringify(["akhflow.pendingAgentMessage", "1", "alpha", 1]);
+    sessionStorage.setItem(key, JSON.stringify({ id: "old", text: "Старое действие" }));
+    localStorage.setItem(key, JSON.stringify({ id: "new", text: "Новое действие", kind: "run" }));
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Агент", exact: true }).click();
+  await page.getByText("Не удалось сохранить состояние отправки", { exact: false }).waitFor();
+  const blockedPosts = posts.length;
+  await input.fill("Не отправлять");
+  await input.press("Enter");
+  assert.equal(posts.length, blockedPosts, "two pending markers must block sends");
+  await page.evaluate(() => {
+    const key = JSON.stringify(["akhflow.pendingAgentMessage", "1", "alpha", 1]);
+    sessionStorage.removeItem(key);
+    localStorage.removeItem(key);
+  });
   await page.addInitScript(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {

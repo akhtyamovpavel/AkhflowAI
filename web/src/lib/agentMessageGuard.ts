@@ -65,6 +65,9 @@ export function useAgentMessageGuard(token: string, project: string, chatId: num
         const storageKey = await storageKeyFor(token, project, chatId);
         let pending = readPending(storageKey);
         const previous = sessionStorage.getItem(storageKey);
+        if (pending && previous !== null) {
+          throw new Error("multiple pending messages");
+        }
         if (!pending && previous !== null) {
           localStorage.setItem(storageKey, previous);
           pending = readPending(storageKey);
