@@ -455,6 +455,7 @@ function Kanban({ tasks, allTasks, epics, selected, selectionDisabled, onSelect,
 
 const taskTitleDrafts = new Map<string, string>();
 const taskTitleWrites = new Map<string, Promise<unknown>>();
+const taskCommentDrafts = new Map<string, string>();
 
 function TaskDetail({ taskId, project, epics, members, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
   taskId: number;
@@ -489,7 +490,11 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   const descriptionSaving = useRef(false);
   const [descriptionError, setDescriptionError] = useState("");
   const [descriptionRefreshFailed, setDescriptionRefreshFailed] = useState(false);
-  const [comment, setComment] = useState("");
+  const [comment, setComment] = useState(taskCommentDrafts.get(draftKey) ?? "");
+  const commentRevision = useRef(0);
+  const commentSending = useRef(false);
+  const [sendingComment, setSendingComment] = useState(false);
+  const [commentError, setCommentError] = useState("");
   const [newDep, setNewDep] = useState("");
   const [dependencyError, setDependencyError] = useState("");
   const [removingDependency, setRemovingDependency] = useState(false);
@@ -609,7 +614,7 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const canLeave = () => {
-    if (descriptionSaving.current) return false;
+    if (descriptionSaving.current || commentSending.current) return false;
     if (description.current.value !== description.current.saved) {
       return window.confirm("Описание не сохранено. Закрыть карточку и потерять изменения?");
     }
@@ -629,13 +634,32 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
   };
 
   const addComment = async () => {
-    if (!comment.trim()) return;
-    await request(`/api/tasks/${taskId}/comments`, {
-      method: "POST",
-      body: JSON.stringify({ body: comment.trim() }),
-    }, token);
-    setComment("");
-    await load();
+    if (commentSending.current || !comment.trim()) return;
+    const body = comment.trim();
+    const revision = commentRevision.current;
+    commentSending.current = true;
+    setSendingComment(true);
+    setCommentError("");
+    try {
+      await request(`/api/tasks/${taskId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      }, token);
+      if (commentRevision.current === revision) {
+        taskCommentDrafts.delete(draftKey);
+        setComment("");
+      }
+      try {
+        await load();
+      } catch {
+        setCommentError("Комментарий отправлен, но обновить список не удалось.");
+      }
+    } catch {
+      setCommentError("Не удалось подтвердить отправку. Проверь список комментариев перед повтором.");
+    } finally {
+      commentSending.current = false;
+      setSendingComment(false);
+    }
   };
 
   const addDep = async () => {
@@ -875,12 +899,27 @@ function TaskDetail({ taskId, project, epics, members, tasks, recommendationRead
             <div className="mt-2 flex gap-2">
               <Input
                 value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addComment()}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  commentRevision.current++;
+                  if (value) {
+                    taskCommentDrafts.set(draftKey, value);
+                  } else {
+                    taskCommentDrafts.delete(draftKey);
+                  }
+                  setComment(value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void addComment();
+                  }
+                }}
                 placeholder="Комментарий..."
               />
-              <Button size="sm" onClick={addComment}><Send /></Button>
+              <Button size="sm" aria-label="Отправить комментарий" disabled={sendingComment} onClick={addComment}><Send /></Button>
             </div>
+            {commentError && <p role="alert" className="text-sm text-destructive">{commentError}</p>}
           </div>
           <div>
             <div className="mb-1 text-xs text-muted-foreground">История ({history.length})</div>
