@@ -75,6 +75,8 @@ jobs:
       - run: node ../scripts/test_comment_submit_ui.mjs
       - run: node ../scripts/test_attachment_refresh_ui.mjs
       - run: node ../scripts/test_dependency_selection_ui.mjs
+      - run: node ../scripts/test_dependency_delete_result_ui.mjs
+      - run: node ../scripts/test_dependency_removal_race_ui.mjs
 
   compose:
     runs-on: ubuntu-latest

@@ -88,10 +88,12 @@ try {
 
   const dependentRow = page.getByRole("button", { name: "#3 Последователь" }).locator("..");
   await dependentRow.locator("button").last().click();
-  await page.getByRole("alert").getByText("Не удалось удалить связь", { exact: false }).waitFor();
+  await page.getByRole("alert").getByText("Не удалось подтвердить удаление связи", { exact: false }).waitFor();
   assert.equal(await dependentRow.count(), 1);
   assert.equal(requests[1], "/api/tasks/3/dependencies/1");
 
+  await page.getByRole("button", { name: "Проверить удаление связи", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "Проверка завершена: связь присутствует" }).waitFor();
   failBlockedRemoval = false;
   await dependentRow.locator("button").last().click();
   await page.getByText("Блокирует (1)").waitFor({ state: "hidden" });
