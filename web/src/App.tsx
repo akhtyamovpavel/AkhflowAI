@@ -1349,6 +1349,10 @@ function ProjectWorkspace({
   const [newProjectName, setNewProjectName] = useState("");
   const [epics, setEpics] = useState<Epic[]>([]);
   const [epicsProject, setEpicsProject] = useState("");
+  const [epicsError, setEpicsError] = useState(false);
+  const [epicsLoading, setEpicsLoading] = useState(false);
+  const epicsRequest = useRef(0);
+  const epicsController = useRef<AbortController | null>(null);
   const [epicFilter, setEpicFilter] = useState<string>("all");
   const [showNewEpic, setShowNewEpic] = useState(false);
   const [newEpicTitle, setNewEpicTitle] = useState("");
@@ -1445,14 +1449,35 @@ function ProjectWorkspace({
   }, [activeChat, loadMessages]);
 
   const loadEpics = useCallback(async () => {
-    if (!token || !project) return;
-    const data: Epic[] = (await workspaceApi(`/api/projects/${project}/epics`, {}, token)) ?? [];
-    setEpics(data);
-    setEpicsProject(project);
+    if (!token || !project || !mounted.current) return;
+    const request = ++epicsRequest.current;
+    epicsController.current?.abort();
+    const controller = new AbortController();
+    epicsController.current = controller;
+    const isCurrent = () => mounted.current && request === epicsRequest.current && localStorage.getItem("akhflow.token") === token;
+    setEpicsLoading(true);
+    try {
+      const path = `/api/projects/${encodeURIComponent(project)}/epics`;
+      const data: Epic[] = (await workspaceApi(path, { signal: controller.signal }, token)) ?? [];
+      if (!isCurrent()) return;
+      setEpics(data);
+      setEpicsProject(project);
+      setEpicsError(false);
+    } catch (error) {
+      if (!isCurrent()) return;
+      setEpicsError(true);
+      throw error;
+    } finally {
+      if (isCurrent()) setEpicsLoading(false);
+    }
   }, [token, project, workspaceApi]);
 
   useEffect(() => {
-    loadEpics();
+    void loadEpics().catch(() => {});
+    return () => {
+      epicsRequest.current++;
+      epicsController.current?.abort();
+    };
   }, [loadEpics]);
 
   const loadMembers = useCallback(async () => {
@@ -1513,23 +1538,6 @@ function ProjectWorkspace({
       }
       refreshing = false;
     };
-    const refreshEpics = async () => {
-      try {
-        const path = `/api/projects/${encodeURIComponent(project)}/epics`;
-        const response = await fetch(API + path, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (!response.ok) return;
-        const data: Epic[] = await response.json();
-        if (!controller.signal.aborted) {
-          setEpics(data ?? []);
-          setEpicsProject(project);
-        }
-      } catch {
-        // A later import or project change refreshes the epics.
-      }
-    };
     const labels: Record<string, string> = {
       task_created: "Создана задача",
       tasks_imported: "Данные проекта импортированы",
@@ -1547,7 +1555,7 @@ function ProjectWorkspace({
         if (controller.signal.aborted || !value || typeof value !== "object") return;
         const event = value as Record<string, unknown>;
         if (event.project_id !== projectId || typeof event.type !== "string" || !Object.hasOwn(labels, event.type)) return;
-        if (event.type === "tasks_imported") void refreshEpics();
+        if (event.type === "tasks_imported") void loadEpics().catch(() => {});
         const title = typeof event.title === "string" ? event.title : "";
         const text = title ? `${labels[event.type]}: ${title}` : labels[event.type];
         const validTaskId = typeof event.task_id === "number" && Number.isSafeInteger(event.task_id) && event.task_id > 0;
@@ -1563,7 +1571,7 @@ function ProjectWorkspace({
       unsubscribe();
       window.clearTimeout(noticeTimer);
     };
-  }, [project, projectId, token]);
+  }, [project, projectId, token, loadEpics]);
 
   useEffect(() => {
     if (!sharedTask || sharedTask.project !== project || tasksProject !== project) return;
@@ -1666,7 +1674,7 @@ function ProjectWorkspace({
     }, token);
     setShowNewEpic(false);
     setNewEpicTitle("");
-    loadEpics();
+    void loadEpics().catch(() => {});
   };
 
   const importTrello = async () => {
@@ -1895,6 +1903,14 @@ function ProjectWorkspace({
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+        {epicsError && (
+          <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-destructive p-3 text-sm">
+            <span>Не удалось загрузить эпики. Попробуй ещё раз.</span>
+            <Button variant="outline" size="sm" disabled={epicsLoading} onClick={() => void loadEpics().catch(() => {})}>
+              Повторить загрузку эпиков
+            </Button>
+          </div>
+        )}
         {accessError && (
           <div role="alert" className="rounded-md border border-destructive p-3 text-sm">
             Недостаточно прав для выполнения действия. Обратись к владельцу проекта.
