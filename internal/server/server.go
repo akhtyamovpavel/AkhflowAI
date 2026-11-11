@@ -71,6 +71,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/epics/{id}", s.projectAccess("epic", false, s.getEpic))
 	mux.Handle("DELETE /api/epics/{id}", s.projectAccess("epic", true, s.deleteEpic))
 	mux.Handle("GET /api/tasks/{id}", s.projectAccess("task", false, s.getTask))
+	mux.Handle("POST /api/tasks/{id}/runs", s.projectAccess("task", true, s.createTaskRun))
+	mux.Handle("GET /api/tasks/{id}/runs", s.projectAccess("task", false, s.listTaskRuns))
 	mux.Handle("GET /api/tasks/{id}/attachments", s.projectAccess("task", false, s.listAttachments))
 	mux.Handle("POST /api/tasks/{id}/attachments", s.projectAccess("task", true, s.uploadAttachment))
 	mux.Handle("GET /api/tasks/{id}/attachments/{attachment}", s.projectAccess("task", false, s.downloadAttachment))

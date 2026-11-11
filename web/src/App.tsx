@@ -12,6 +12,7 @@ import { ProjectDashboard } from "@/components/ProjectDashboard";
 import { AgentUsage } from "@/components/AgentUsage";
 import { AgentRuns } from "@/components/AgentRuns";
 import { AgentInstructions } from "@/components/AgentInstructions";
+import { TaskAgentRuns } from "@/components/TaskAgentRuns";
 import { isAgentRunList } from "@/lib/agentRuns";
 import type { AgentUsageData } from "@/components/AgentUsage";
 import { ProjectMembers } from "@/components/ProjectMembers";
@@ -533,7 +534,7 @@ type DependencyRemoval = {
   confirmed: boolean;
 };
 
-function TaskDetail({ taskId, project, epics, members, membersLoaded, membersError, membersLoading, onRetryMembers, tasks, recommendationReady, onOpen, onClose, onChanged, request }: {
+function TaskDetail({ taskId, project, epics, members, membersLoaded, membersError, membersLoading, onRetryMembers, tasks, recommendationReady, onOpen, onClose, onChanged, onOpenChat, request }: {
   taskId: number;
   project: string;
   epics: Epic[];
@@ -547,6 +548,7 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
   onOpen: (id: number) => void;
   onClose: () => void;
   onChanged: () => void | Promise<void>;
+  onOpenChat: (chatId: number) => void;
   request: ApiRequest;
 }) {
   const token = localStorage.getItem("akhflow.token");
@@ -1262,6 +1264,7 @@ function TaskDetail({ taskId, project, epics, members, membersLoaded, membersErr
               ))}
             </div>
           </div>
+          {token && <TaskAgentRuns taskId={taskId} project={project} token={token} request={request} onChanged={onChanged} onOpenChat={onOpenChat} />}
         </div>
       </div>
     </div>
@@ -2682,7 +2685,7 @@ function ProjectWorkspace({
 
       {openTaskId && (
         <TaskDetail
-          key={openTaskId}
+          key={`${project}:${openTaskId}`}
           taskId={openTaskId}
           project={project}
           epics={epics}
@@ -2696,6 +2699,13 @@ function ProjectWorkspace({
           onOpen={setOpenTaskId}
           onClose={() => setOpenTaskId(null)}
           onChanged={loadTasks}
+          onOpenChat={(chatId) => {
+            setOpenTaskId(null);
+            setView("agent");
+            void loadChats().then(() => {
+              if (mounted.current && localStorage.getItem("akhflow.token") === token) setActiveChat(chatId);
+            });
+          }}
           request={workspaceApi}
         />
       )}

@@ -15,6 +15,7 @@ var ErrRunQueueFull = errors.New("run queue full")
 type AgentRun struct {
 	ID                   int64            `json:"id"`
 	ChatID               int64            `json:"chat_id"`
+	TaskID               *int64           `json:"task_id"`
 	ActorID              int64            `json:"actor_id"`
 	RequestKey           string           `json:"request_key"`
 	Message              string           `json:"message"`
@@ -48,11 +49,12 @@ type AgentRunStep struct {
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
-const runColumns = `id,chat_id,actor_id,request_key::text,message,history,status,iteration,tool,result,error_code,created_at,started_at,finished_at,cancel_requested,instructions_snapshot,instructions_version`
+const runColumns = `id,chat_id,task_id,actor_id,request_key::text,message,history,status,iteration,tool,result,error_code,created_at,started_at,finished_at,cancel_requested,instructions_snapshot,instructions_version`
 
 func scanRun(row pgx.Row) (*AgentRun, error) {
 	r := &AgentRun{Steps: []AgentRunStep{}}
-	err := row.Scan(&r.ID, &r.ChatID, &r.ActorID, &r.RequestKey, &r.Message, &r.History, &r.Status, &r.Iteration, &r.Tool, &r.Result, &r.ErrorCode, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.CancelRequested, &r.InstructionsSnapshot, &r.InstructionsVersion)
+	err := row.Scan(&r.ID, &r.ChatID, &r.TaskID, &r.ActorID, &r.RequestKey, &r.Message, &r.History, &r.Status, &r.Iteration, &r.Tool, &r.Result, &r.ErrorCode, &r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.CancelRequested, &r.InstructionsSnapshot, &r.InstructionsVersion)
+
 	if err != nil {
 		return nil, err
 	}
