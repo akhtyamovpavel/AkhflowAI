@@ -16,6 +16,7 @@ const server = spawn("./node_modules/.bin/vite", ["--host", "127.0.0.1", "--port
   stdio: "ignore",
 });
 let browser;
+let page;
 try {
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
@@ -25,7 +26,7 @@ try {
     }
   }
   browser = await playwright.chromium.launch({ executablePath: "/usr/bin/google-chrome", headless: true });
-  const page = await browser.newPage();
+  page = await browser.newPage();
   const token = `fixture.${Buffer.from('{"sub":"1"}').toString("base64url")}.fixture`;
   const otherToken = `fixture.${Buffer.from('{"sub":"2"}').toString("base64url")}.fixture`;
   await page.addInitScript((value) => {
@@ -82,8 +83,7 @@ try {
       const request = result.request();
       return new URL(result.url()).pathname === "/api/chats/1/runs" && request.method() === "POST" && result.status() === 202;
     });
-    await retry.click();
-    await accepted;
+    await Promise.all([accepted, retry.click()]);
     await page.waitForFunction(() => {
       return !Object.keys(localStorage).some((name) => name.includes("akhflow.pendingAgentMessage") && !name.endsWith(".acknowledged"));
     });
@@ -214,6 +214,7 @@ try {
   assert.equal(posts.length, before);
   console.log("PASS: uncertain sends, malformed responses, reload, account isolation and storage failure");
 } finally {
+  if (page) await page.unrouteAll({ behavior: "wait" });
   if (browser) await browser.close();
   server.kill();
 }
