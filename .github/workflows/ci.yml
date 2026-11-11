@@ -67,6 +67,7 @@ jobs:
       - run: node ../scripts/test_stale_auth_ui.mjs
       - run: node ../scripts/test_stale_forbidden_ui.mjs
       - run: node ../scripts/test_login_session_ui.mjs
+      - run: node ../scripts/test_registration_submit_ui.mjs
       - run: node ../scripts/test_title_save_ui.mjs
       - run: node ../scripts/test_task_creation_ui.mjs
       - run: node ../scripts/test_dependency_addition_ui.mjs
