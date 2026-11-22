@@ -687,7 +687,6 @@ var Registry = []Tool{
 				return Result{}, err
 			}
 			return Result{Ok: true, Message: fmt.Sprintf("epic %d decomposed into %d tasks", epic.ID, len(ids)), Data: map[string]any{"epic_id": epic.ID, "task_ids": ids}}, nil
-			return Result{Ok: true, Message: fmt.Sprintf("epic %d decomposed into %d tasks", epic.ID, len(ids)), Data: map[string]any{"epic_id": epic.ID, "task_ids": ids}}, nil
 		},
 	},
 	{
