@@ -247,6 +247,24 @@ func (s *Store) ValidateAssignee(ctx context.Context, projectID, userID int64) e
 	return nil
 }
 
+func (s *Store) OpenTaskCountsByAssignee(ctx context.Context, projectID int64) (map[int64]int, error) {
+	rows, err := s.db.Query(ctx, `SELECT assignee_id, COUNT(*) FROM tasks WHERE project_id=$1 AND recurring='' AND status <> 'done' AND assignee_id IS NOT NULL GROUP BY assignee_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListProjectMembers(ctx context.Context, projectID int64) ([]domain.User, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT u.id, u.email, u.display_name, pm.role

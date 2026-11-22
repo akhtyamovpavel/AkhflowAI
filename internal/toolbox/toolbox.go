@@ -543,6 +543,152 @@ var Registry = []Tool{
 		},
 	},
 	{
+		Name:        "decompose_epic",
+		Description: "Decompose an epic into tasks. Pass the epic id and a list of tasks (title, description, optional assignee email); each task is created in the epic with status todo. Tasks without an assignee are auto-assigned to the project member with the fewest open tasks",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project": map[string]any{"type": "string", "description": "Project space slug"},
+				"epic_id": map[string]any{"type": "integer", "description": "Epic id to decompose"},
+				"tasks": map[string]any{
+					"type":  "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"title":       map[string]any{"type": "string"},
+							"description": map[string]any{"type": "string"},
+							"assignee":    map[string]any{"type": "string", "description": "Assignee email; omit to auto-assign"},
+						},
+						"required": []string{"title"},
+					},
+				},
+			},
+			"required": []string{"project", "epic_id", "tasks"},
+		},
+		Handler: func(ctx context.Context, d Deps, args json.RawMessage) (Result, error) {
+			var v map[string]any
+			if err := json.Unmarshal(args, &v); err != nil {
+				return Result{}, err
+			}
+			p, err := projectBySlug(ctx, d, str(v, "project"))
+			if err != nil {
+				return Result{}, err
+			}
+			epicID := num(v, "epic_id")
+			if epicID == nil || *epicID <= 0 {
+				return Result{}, errors.New("epic_id is required")
+			}
+			epic, err := d.Store.EpicByID(ctx, int64(*epicID))
+			if err != nil {
+				return Result{}, err
+			}
+			if epic == nil {
+				return Result{}, fmt.Errorf("epic %d not found", *epicID)
+			}
+			if epic.ProjectID != p.ID {
+				return Result{}, fmt.Errorf("epic %d does not belong to project %q", *epicID, p.Slug)
+			}
+			rawTasks, ok := v["tasks"].([]any)
+			if !ok || len(rawTasks) == 0 {
+				return Result{}, errors.New("tasks is required")
+			}
+			if len(rawTasks) > 50 {
+				return Result{}, errors.New("too many tasks (max 50)")
+			}
+			members, err := d.Store.ListProjectMembers(ctx, p.ID)
+			if err != nil {
+				return Result{}, err
+			}
+			writable := make([]domain.User, 0, len(members))
+			for _, m := range members {
+				if store.CanWriteProject(m.Role) {
+					writable = append(writable, m)
+				}
+			}
+			openCounts, err := d.Store.OpenTaskCountsByAssignee(ctx, p.ID)
+			if err != nil {
+				return Result{}, err
+			}
+			type planned struct {
+				title string
+				desc  string
+				user  *domain.User
+			}
+			plan := make([]planned, 0, len(rawTasks))
+			for _, raw := range rawTasks {
+				item, ok := raw.(map[string]any)
+				if !ok {
+					return Result{}, errors.New("each task must be an object")
+				}
+				title := str(item, "title")
+				if title == "" {
+					return Result{}, errors.New("each task requires a title")
+				}
+				pl := planned{title: title, desc: str(item, "description")}
+				if em := str(item, "assignee"); em != "" {
+					u, err := d.Store.UserByEmail(ctx, em)
+					if err != nil {
+						return Result{}, err
+					}
+					if u == nil {
+						return Result{}, fmt.Errorf("assignee %q not found", em)
+					}
+					if err := d.Store.ValidateAssignee(ctx, p.ID, u.ID); err != nil {
+						return Result{}, err
+					}
+					pl.user = u
+					openCounts[u.ID]++
+				} else {
+					best := int64(0)
+					bestCount := -1
+					for _, m := range writable {
+						c := openCounts[m.ID]
+						if bestCount < 0 || c < bestCount || (c == bestCount && m.ID < best) {
+							best, bestCount = m.ID, c
+						}
+					}
+					if best > 0 {
+						u, err := d.Store.UserByID(ctx, best)
+						if err != nil {
+							return Result{}, err
+						}
+						if u == nil {
+							return Result{}, fmt.Errorf("assignee %d not found", best)
+						}
+						pl.user = u
+						openCounts[best]++
+					}
+				}
+				plan = append(plan, pl)
+			}
+			ids := make([]int64, 0, len(plan))
+			for _, item := range plan {
+				t := domain.Task{
+					ProjectID: p.ID,
+					Title:     item.title,
+					Description: item.desc,
+					Status:    domain.StatusTodo,
+					Priority:  domain.PriorityMedium,
+					AuthorID:  d.ActorID,
+					EpicID:    &epic.ID,
+				}
+				if item.user != nil {
+					t.AssigneeID = &item.user.ID
+				}
+				id, err := d.Store.CreateTask(ctx, t)
+				if err != nil {
+					return Result{}, err
+				}
+				ids = append(ids, id)
+				publishEvent(d, events.Event{Type: "task_created", ProjectID: p.ID, TaskID: id, Title: item.title, Actor: d.Actor})
+			}
+			if err := d.Store.Audit(ctx, d.Actor, "decompose_epic", "epic", &epic.ID, map[string]any{"title": epic.Title, "project": p.Slug, "tasks": len(ids)}); err != nil {
+				return Result{}, err
+			}
+			return Result{Ok: true, Message: fmt.Sprintf("epic %d decomposed into %d tasks", epic.ID, len(ids)), Data: map[string]any{"epic_id": epic.ID, "task_ids": ids}}, nil
+		},
+	},
+	{
 		Name:        "set_task_epic",
 		Description: "Attach a task to an epic, or detach it when epic_id is null",
 		Schema: map[string]any{
