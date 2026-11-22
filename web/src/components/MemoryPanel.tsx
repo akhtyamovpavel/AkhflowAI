@@ -31,6 +31,11 @@ export function MemoryPanel({ project, token, request }: { project: string; toke
   }, []);
 
   useEffect(() => {
+    setMemories(null);
+    setMessage("");
+  }, [project]);
+
+  useEffect(() => {
     if (!open || !dialog.current) return;
     const element = dialog.current;
     element.showModal();
@@ -71,6 +76,7 @@ export function MemoryPanel({ project, token, request }: { project: string; toke
       if (!current()) return;
       setDraft("");
       setMessage("Запись сохранена.");
+      pending.current = false;
       await load();
     } catch {
       if (current()) setMessage("Не удалось сохранить запись.");
