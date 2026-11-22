@@ -1343,8 +1343,19 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m.UserID != uid {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
-		return
+		if m.Scope != "project" || m.ProjectID == nil || *m.ProjectID != p.ID {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+			return
+		}
+		role, err := s.Store.ProjectRole(r.Context(), p.ID, uid)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if role != "owner" && role != "admin" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+			return
+		}
 	}
 	if m.Scope == "project" && (m.ProjectID == nil || *m.ProjectID != p.ID) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})

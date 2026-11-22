@@ -795,7 +795,16 @@ var Registry = []Tool{
 				return Result{}, fmt.Errorf("memory %d not found", *memID)
 			}
 			if m.UserID != d.ActorID {
-				return Result{}, errors.New("access denied to memory")
+				if m.Scope != "project" || m.ProjectID == nil || *m.ProjectID != p.ID {
+					return Result{}, errors.New("access denied to memory")
+				}
+				role, err := d.Store.ProjectRole(ctx, p.ID, d.ActorID)
+				if err != nil {
+					return Result{}, err
+				}
+				if role != "owner" && role != "admin" {
+					return Result{}, errors.New("access denied to memory")
+				}
 			}
 			if m.Scope == "project" && (m.ProjectID == nil || *m.ProjectID != p.ID) {
 				return Result{}, errors.New("access denied to memory")
