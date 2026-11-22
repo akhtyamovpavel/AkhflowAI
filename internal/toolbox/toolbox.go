@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -686,6 +687,91 @@ var Registry = []Tool{
 				return Result{}, err
 			}
 			return Result{Ok: true, Message: fmt.Sprintf("epic %d decomposed into %d tasks", epic.ID, len(ids)), Data: map[string]any{"epic_id": epic.ID, "task_ids": ids}}, nil
+		},
+	},
+	{
+		Name:        "prioritize_epic",
+		Description: "Re-prioritize the tasks of an epic based on their unfinished dependencies: 0 unfinished deps -> high, 1-2 -> medium, 3+ -> low. Returns the tasks ordered high to low",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project": map[string]any{"type": "string", "description": "Project space slug"},
+				"epic_id": map[string]any{"type": "integer", "description": "Epic id to prioritize"},
+			},
+			"required": []string{"project", "epic_id"},
+		},
+		Handler: func(ctx context.Context, d Deps, args json.RawMessage) (Result, error) {
+			var v map[string]any
+			if err := json.Unmarshal(args, &v); err != nil {
+				return Result{}, err
+			}
+			p, err := projectBySlug(ctx, d, str(v, "project"))
+			if err != nil {
+				return Result{}, err
+			}
+			epicID := num(v, "epic_id")
+			if epicID == nil || *epicID <= 0 {
+				return Result{}, errors.New("epic_id is required")
+			}
+			epic, err := d.Store.EpicByID(ctx, int64(*epicID))
+			if err != nil {
+				return Result{}, err
+			}
+			if epic == nil {
+				return Result{}, fmt.Errorf("epic %d not found", *epicID)
+			}
+			if epic.ProjectID != p.ID {
+				return Result{}, fmt.Errorf("epic %d does not belong to project %q", *epicID, p.Slug)
+			}
+			tasks, err := d.Store.ListTasksByEpic(ctx, epic.ID)
+			if err != nil {
+				return Result{}, err
+			}
+			type ranked struct {
+				id       int64
+				title    string
+				priority string
+				unfinished int
+			}
+			rankedTasks := make([]ranked, 0, len(tasks))
+			for _, t := range tasks {
+				if t.Status == domain.StatusDone {
+					continue
+				}
+				blocked, err := d.Store.UnfinishedDependencies(ctx, t.ID)
+				if err != nil {
+					return Result{}, err
+				}
+				n := len(blocked)
+				priority := domain.PriorityLow
+				if n == 0 {
+					priority = domain.PriorityHigh
+				} else if n <= 2 {
+					priority = domain.PriorityMedium
+				}
+				if t.Priority != priority {
+					if err := d.Store.UpdateTask(ctx, t.ID, []string{"priority"}, []any{priority}); err != nil {
+						return Result{}, err
+					}
+					publishEvent(d, events.Event{Type: "task_updated", ProjectID: p.ID, TaskID: t.ID, Title: t.Title, Actor: d.Actor})
+				}
+				rankedTasks = append(rankedTasks, ranked{t.ID, t.Title, priority, n})
+			}
+			order := map[string]int{domain.PriorityHigh: 0, domain.PriorityMedium: 1, domain.PriorityLow: 2}
+			sort.Slice(rankedTasks, func(i, j int) bool {
+				if order[rankedTasks[i].priority] != order[rankedTasks[j].priority] {
+					return order[rankedTasks[i].priority] < order[rankedTasks[j].priority]
+				}
+				return rankedTasks[i].id < rankedTasks[j].id
+			})
+			if err := d.Store.Audit(ctx, d.Actor, "prioritize_epic", "epic", &epic.ID, map[string]any{"title": epic.Title, "project": p.Slug, "tasks": len(rankedTasks)}); err != nil {
+				return Result{}, err
+			}
+			out := make([]map[string]any, 0, len(rankedTasks))
+			for _, r := range rankedTasks {
+				out = append(out, map[string]any{"id": r.id, "title": r.title, "priority": r.priority, "unfinished_deps": r.unfinished})
+			}
+			return Result{Ok: true, Message: fmt.Sprintf("epic %d prioritized (%d tasks)", epic.ID, len(out)), Data: map[string]any{"epic_id": epic.ID, "tasks": out}}, nil
 		},
 	},
 	{
