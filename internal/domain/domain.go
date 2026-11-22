@@ -144,3 +144,12 @@ type Epic struct {
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+type Memory struct {
+	ID        int64     `json:"id"`
+	ProjectID *int64    `json:"project_id,omitempty"`
+	UserID    int64     `json:"user_id"`
+	Scope     string    `json:"scope"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}

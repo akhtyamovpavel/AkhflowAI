@@ -690,6 +690,131 @@ var Registry = []Tool{
 		},
 	},
 	{
+		Name:        "list_memories",
+		Description: "List project and user memory notes (decisions, agreements, style) for the current project",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project": map[string]any{"type": "string", "description": "Project space slug"},
+			},
+			"required": []string{"project"},
+		},
+		Handler: func(ctx context.Context, d Deps, args json.RawMessage) (Result, error) {
+			var v map[string]any
+			if err := json.Unmarshal(args, &v); err != nil {
+				return Result{}, err
+			}
+			p, err := projectBySlug(ctx, d, str(v, "project"))
+			if err != nil {
+				return Result{}, err
+			}
+			memories, err := d.Store.ListMemories(ctx, p.ID, d.ActorID)
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Ok: true, Data: memories}, nil
+		},
+	},
+	{
+		Name:        "add_memory",
+		Description: "Save a memory note (decision, agreement, style) for the project or for the current user",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project": map[string]any{"type": "string", "description": "Project space slug"},
+				"scope":   map[string]any{"type": "string", "enum": []string{"project", "user"}, "description": "project or user"},
+				"content": map[string]any{"type": "string", "description": "Memory text (max 16 KiB)"},
+			},
+			"required": []string{"project", "scope", "content"},
+		},
+		Handler: func(ctx context.Context, d Deps, args json.RawMessage) (Result, error) {
+			var v map[string]any
+			if err := json.Unmarshal(args, &v); err != nil {
+				return Result{}, err
+			}
+			p, err := projectBySlug(ctx, d, str(v, "project"))
+			if err != nil {
+				return Result{}, err
+			}
+			scope := str(v, "scope")
+			if scope != "project" && scope != "user" {
+				return Result{}, errors.New("scope must be project or user")
+			}
+			content := str(v, "content")
+			if strings.TrimSpace(content) == "" {
+				return Result{}, errors.New("content is required")
+			}
+			if len(content) > 16384 {
+				return Result{}, errors.New("content too long (max 16 KiB)")
+			}
+			var projectID *int64
+			if scope == "project" {
+				id := p.ID
+				projectID = &id
+			}
+			id, err := d.Store.AddMemory(ctx, projectID, d.ActorID, scope, content)
+			if err != nil {
+				return Result{}, err
+			}
+			if err := d.Store.Audit(ctx, d.Actor, "add_memory", "memory", &id, map[string]any{"scope": scope, "project": p.Slug}); err != nil {
+				return Result{}, err
+			}
+			return Result{Ok: true, Message: fmt.Sprintf("memory %d saved", id), Data: map[string]any{"id": id}}, nil
+		},
+	},
+	{
+		Name:        "delete_memory",
+		Description: "Delete a memory note owned by the current user (project or user scope)",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project":  map[string]any{"type": "string", "description": "Project space slug"},
+				"memory_id": map[string]any{"type": "integer"},
+			},
+			"required": []string{"project", "memory_id"},
+		},
+		Handler: func(ctx context.Context, d Deps, args json.RawMessage) (Result, error) {
+			var v map[string]any
+			if err := json.Unmarshal(args, &v); err != nil {
+				return Result{}, err
+			}
+			p, err := projectBySlug(ctx, d, str(v, "project"))
+			if err != nil {
+				return Result{}, err
+			}
+			memID := num(v, "memory_id")
+			if memID == nil || *memID <= 0 {
+				return Result{}, errors.New("memory_id is required")
+			}
+			m, err := d.Store.MemoryByID(ctx, int64(*memID))
+			if err != nil {
+				return Result{}, err
+			}
+			if m == nil {
+				return Result{}, fmt.Errorf("memory %d not found", *memID)
+			}
+			if m.UserID != d.ActorID {
+				if m.Scope != "project" || m.ProjectID == nil || *m.ProjectID != p.ID {
+					return Result{}, errors.New("access denied to memory")
+				}
+				role, err := d.Store.ProjectRole(ctx, p.ID, d.ActorID)
+				if err != nil {
+					return Result{}, err
+				}
+				if role != "owner" && role != "admin" {
+					return Result{}, errors.New("access denied to memory")
+				}
+			}
+			if m.Scope == "project" && (m.ProjectID == nil || *m.ProjectID != p.ID) {
+				return Result{}, errors.New("access denied to memory")
+			}
+			if err := d.Store.DeleteMemory(ctx, m.ID, d.ActorID); err != nil {
+				return Result{}, err
+			}
+			return Result{Ok: true, Message: fmt.Sprintf("memory %d deleted", m.ID)}, nil
+		},
+	},
+	{
 		Name:        "prioritize_epic",
 		Description: "Re-prioritize the tasks of an epic based on their unfinished dependencies: 0 unfinished deps -> high, 1-2 -> medium, 3+ -> low. Returns the tasks ordered high to low",
 		Schema: map[string]any{
