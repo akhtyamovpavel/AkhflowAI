@@ -544,7 +544,7 @@ var Registry = []Tool{
 	},
 	{
 		Name:        "decompose_epic",
-		Description: "Decompose an epic into tasks. Pass the epic id and a list of tasks (title, description); each task is created in the epic with status todo",
+		Description: "Decompose an epic into tasks. Pass the epic id and a list of tasks (title, description, optional assignee email); each task is created in the epic with status todo. Tasks without an assignee are auto-assigned to the project member with the fewest open tasks",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -557,6 +557,7 @@ var Registry = []Tool{
 						"properties": map[string]any{
 							"title":       map[string]any{"type": "string"},
 							"description": map[string]any{"type": "string"},
+							"assignee":    map[string]any{"type": "string", "description": "Assignee email; omit to auto-assign"},
 						},
 						"required": []string{"title"},
 					},
@@ -594,6 +595,14 @@ var Registry = []Tool{
 			if len(rawTasks) > 50 {
 				return Result{}, errors.New("too many tasks (max 50)")
 			}
+			members, err := d.Store.ListProjectMembers(ctx, p.ID)
+			if err != nil {
+				return Result{}, err
+			}
+			openCounts, err := d.Store.OpenTaskCountsByAssignee(ctx, p.ID)
+			if err != nil {
+				return Result{}, err
+			}
 			ids := make([]int64, 0, len(rawTasks))
 			for _, raw := range rawTasks {
 				item, ok := raw.(map[string]any)
@@ -612,6 +621,33 @@ var Registry = []Tool{
 					Priority:  domain.PriorityMedium,
 					AuthorID:  d.ActorID,
 					EpicID:    &epic.ID,
+				}
+				if em := str(item, "assignee"); em != "" {
+					u, err := d.Store.UserByEmail(ctx, em)
+					if err != nil {
+						return Result{}, err
+					}
+					if u == nil {
+						return Result{}, fmt.Errorf("assignee %q not found", em)
+					}
+					if err := d.Store.ValidateAssignee(ctx, p.ID, u.ID); err != nil {
+						return Result{}, err
+					}
+					t.AssigneeID = &u.ID
+					openCounts[u.ID]++
+				} else {
+					best := int64(0)
+					bestCount := -1
+					for _, m := range members {
+						c := openCounts[m.ID]
+						if bestCount < 0 || c < bestCount || (c == bestCount && m.ID < best) {
+							best, bestCount = m.ID, c
+						}
+					}
+					if best > 0 {
+						t.AssigneeID = &best
+						openCounts[best]++
+					}
 				}
 				id, err := d.Store.CreateTask(ctx, t)
 				if err != nil {
