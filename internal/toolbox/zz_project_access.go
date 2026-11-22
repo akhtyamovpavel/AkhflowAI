@@ -100,11 +100,11 @@ func normalizeToolArguments(args json.RawMessage, schema map[string]any, project
 // New tools must explicitly declare their resource and whether they change it.
 func toolAccessPolicy(name string) (projectScoped, readOnly, known bool) {
 	switch name {
-	case "list_tasks", "list_epics", "get_agent_usage":
+	case "list_tasks", "list_epics", "get_agent_usage", "list_memories":
 		return true, true, true
 	case "get_task", "list_attachments":
 		return false, true, true
-	case "create_task", "create_epic", "decompose_epic", "prioritize_epic", "import_trello", "import_akhcheck_course", "import_bitrix24_tasks":
+	case "create_task", "create_epic", "decompose_epic", "prioritize_epic", "add_memory", "delete_memory", "import_trello", "import_akhcheck_course", "import_bitrix24_tasks":
 		return true, false, true
 	case "move_task", "add_comment", "set_assignee", "set_task_epic", "add_dependency", "remove_dependency", "set_task_recurring", "set_task_acceptance_criteria", "delete_task":
 		return false, false, true

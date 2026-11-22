@@ -68,6 +68,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/runs/{id}/cancel", s.Auth.Middleware(http.HandlerFunc(s.cancelRun)))
 	mux.Handle("GET /api/projects/{slug}/epics", s.projectAccess("project", false, s.listEpics))
 	mux.Handle("POST /api/projects/{slug}/epics", s.projectAccess("project", true, s.createEpic))
+	mux.Handle("GET /api/projects/{slug}/memories", s.projectAccess("project", false, s.listMemories))
+	mux.Handle("POST /api/projects/{slug}/memories", s.projectAccess("project", true, s.createMemory))
+	mux.Handle("DELETE /api/projects/{slug}/memories/{id}", s.projectAccess("project", true, s.deleteMemory))
 	mux.Handle("GET /api/epics/{id}", s.projectAccess("epic", false, s.getEpic))
 	mux.Handle("DELETE /api/epics/{id}", s.projectAccess("epic", true, s.deleteEpic))
 	mux.Handle("GET /api/tasks/{id}", s.projectAccess("task", false, s.getTask))
@@ -1248,6 +1251,110 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, members)
+}
+
+func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	p, ok := s.projectBySlug(w, r, uid)
+	if !ok {
+		return
+	}
+	memories, err := s.Store.ListMemories(r.Context(), p.ID, uid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, memories)
+}
+
+func (s *Server) createMemory(w http.ResponseWriter, r *http.Request) {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	p, ok := s.projectBySlug(w, r, uid)
+	if !ok {
+		return
+	}
+	var req struct {
+		Scope   string `json:"scope"`
+		Content string `json:"content"`
+	}
+	if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Content) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content required"})
+		return
+	}
+	if req.Scope == "" {
+		req.Scope = "project"
+	}
+	if req.Scope != "project" && req.Scope != "user" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope must be project or user"})
+		return
+	}
+	if len(req.Content) > 16384 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content too long"})
+		return
+	}
+	var projectID *int64
+	if req.Scope == "project" {
+		id := p.ID
+		projectID = &id
+	}
+	id, err := s.Store.AddMemory(r.Context(), projectID, uid, req.Scope, req.Content)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mem, err := s.Store.MemoryByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, mem)
+}
+
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	uid, err := UserFrom(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	p, ok := s.projectBySlug(w, r, uid)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	m, err := s.Store.MemoryByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if m == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if m.UserID != uid {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return
+	}
+	if m.Scope == "project" && (m.ProjectID == nil || *m.ProjectID != p.ID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "access denied"})
+		return
+	}
+	if err := s.Store.DeleteMemory(r.Context(), m.ID, uid); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listEpics(w http.ResponseWriter, r *http.Request) {
